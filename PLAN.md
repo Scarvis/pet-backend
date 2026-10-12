@@ -22,15 +22,18 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 2 — Common helpers (shared by all domains)
 
-- [ ] `internal/common/errors.go`: typed errors + retryable sentinel (`ErrRetryable`) → HTTP 409 after retries. §8.0
-- [ ] `internal/common/money.go`: minor-unit conversion respecting each currency's `minor_unit` (JPY 0, BTC 8, ETH 18); string-backed `Bigint`. §7.1, §6.7
-- [ ] `internal/common/middleware.go`: verify Hasura `X-Action-Secret` header; set `SET LOCAL app.via_action = 'on'`; recover panics → HTTP error. §6.3, §9.1
+- [x] `internal/common/errors.go`: typed errors + retryable sentinel (`ErrRetryable`) → HTTP 409 after retries. §8.0 — added `Error` struct (Status/Code/Message) with constructors, `HTTPStatus(err)` mapper, and JSON error writer used by router + middleware.
+- [x] `internal/common/money.go`: minor-unit conversion respecting each currency's `minor_unit` (JPY 0, BTC 8, ETH 18); string-backed `Bigint`. §7.1, §6.7 — `Bigint` marshals/unmarshals as a quoted decimal string; `ToMinor`/`FromMinor` use `big.Float` for precision on high-decimal currencies; `ConvertToMinor` handles cross-currency (§8.2 step 3).
+- [x] `internal/common/middleware.go`: verify Hasura `X-Action-Secret` header; set `SET LOCAL app.via_action = 'on'`; recover panics → HTTP error. §6.3, §9.1 — wraps any http.Handler (works with chi.Router); ConnProvider interface so db.Pool wires in directly.
 
 ## Phase 3 — Auth (identity)
 
-- [ ] `internal/auth/password.go`: bcrypt hash/compare (cost ≥ 12). §8.1
-- [ ] `internal/auth/jwt.go`: RS256 issue/verify; claims with `x-hasura-*` + `exp`. §8.1
-- [ ] `internal/auth/handler.go`: `register`, `login`, `refreshToken` handlers (transaction flows in §8.1). §7.1, §6.4
+- [x] `internal/auth/password.go`: bcrypt hash/compare (cost ≥ 12). §8.1 — `Hash` uses cost 12; `Compare` is constant-time via `bcrypt.CompareHashAndPassword`. stdlib-only crypto (`golang.org/x/crypto/bcrypt`).
+- [x] `internal/auth/jwt.go`: RS256 issue/verify; claims with `x-hasura-*` + `exp`. §8.1 — pure stdlib (no external JWT lib): PKCS#1v15 sign/verify over SHA-256 of base64url(header).payload; loads RSA key from PEM (PKCS#1 or PKCS#8); claims carry `sub`, the Hasura claim block (`x-hasura-org-id`/`user-id`/`default-role`/`allowed-roles`) and iat/exp.
+- [x] `internal/auth/handler.go`: `register`, `login`, `refreshToken` handlers (transaction flows in §8.1). §7.1, §6.4 — `Register` runs one SERIALIZABLE tx (`WithSerializable`) creating org + user + owner role + system categories, then issues JWT + stores refresh token; `Login` verifies password and rotates a new pair; `RefreshToken` revokes the old token inside a tx and issues fresh tokens after commit (side effects post-COMMIT per §8.0). Lazy-cached RSA signing key.
+- [x] Tests: `internal/auth/jwt_test.go` — bcrypt round-trip, JWT issue/verify round-trip + tamper/wrong-key rejection, PKCS#8 PEM load. All 4 pass; `go build ./...`, `go vet ./...`, gofmt clean on cmd/internal/graphql.
+
+> **Note:** handlers reference the documented schema (identity.organizations/users/roles/user_roles, tx.categories, identity.refresh_tokens). They compile and vet cleanly now but will only run once `db_schema.sql` / migration 0001 are filled in — an open item (see Phase 9). JWT uses stdlib RS256 rather than a third-party library.
 
 ## Phase 4 — Transactions & accounts (core)
 
