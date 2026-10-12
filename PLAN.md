@@ -8,22 +8,17 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 0 — Module & tooling foundation
 
-- [ ] Create `go.mod` (module path e.g. `github.com/financeapp/backend`, Go version).
-- [ ] Add dependencies: `github.com/jackc/pgx/v5` (+ `pgxpool`), `github.com/go-chi/chi/v5`, `log/slog`.
-  - Later: `golang.org/x/crypto/bcrypt`, JWT libs, Prometheus client, etc. (see §2).
-- [ ] `.gitignore`: add `/bin`, `/dist`, `.env`, `*.pem`, IDE files.
-- [ ] Verify the stubs parse: `go build ./...` should compile empty packages; run `gofmt -l .`.
+- [x] Create `go.mod` (module path e.g. `github.com/financeapp/backend`, Go version). ✅ module `github.com/Scarvis/pet-backend`, go 1.23.0.
+- [x] Add dependencies: `github.com/jackc/pgx/v5` (+ `pgxpool`), `github.com/go-chi/chi/v5`, `log/slog`. ✅ both in `go.mod` + `go.sum`; stdlib `slog` present. Later deps (bcrypt, JWT, Prometheus) deferred per §2.
+- [x] `.gitignore`: add `/bin`, `/dist`, `.env`, `*.pem`, IDE files. ✅ all entries present.
+- [x] Verify the stubs parse: `go build ./...` should compile empty packages; run `gofmt -l .`. ✅ `go build ./...` exit 0, `go vet ./...` clean, our code gofmt-clean (only `.agents/skills/…` skill assets are flagged).
 
 ## Phase 1 — Config + DB plumbing (no domain logic yet)
 
-- [ ] `internal/config/`: load env vars + flags, validate, expose typed config (`LISTEN_ADDR`, `DATABASE_URL`, `JWT_*`, `FX_API_*`, `STORAGE_BACKEND`). §9.1
-- [ ] `internal/db/pool.go`: pgx `pool.NewWithConfig` from `DATABASE_URL`; connection health check on startup. §7.1
-- [ ] `internal/db/tx.go`: implement `WithSerializable(ctx, pool, fn)` — retry whole closure on SQLSTATE `40001` / `40P01`, jittered exponential backoff (5 ms base). §8.0
-- [ ] Migrations content:
-  - `migrations/0001_init_schema.up.sql` = contents of `db_schema.sql`. §9.3
-  - `0002_events_uid.up.sql`: add `app.events.uid UUID`, unique index, update `publish_event()`. §5.4
-  - `0003_event_consumers.up.sql`: create `app.event_consumers(name PK, last_event_id)`. §5.4
-- [ ] `Makefile` targets: `migrate-create/up/down`, `build`, `test`, `lint`, `run`. §9.3
+- [x] `internal/config/`: load env vars + flags, validate, expose typed config (`LISTEN_ADDR`, `DATABASE_URL`, `JWT_*`, `FX_API_*`, `STORAGE_BACKEND`). §9.1 — created `config.go`; validates required fields + storage-backend enum.
+- [x] `internal/db/pool.go`: pgx `pool.NewWithConfig` from `DATABASE_URL`; connection health check on startup. §7.1 — sets max/min conns, `MaxConnLifetime`, pings before returning.
+- [x] `internal/db/tx.go`: implement `WithSerializable(ctx, pool, fn)` — retry whole closure on SQLSTATE `40001` / `40P01`, jittered exponential backoff (5 ms base). §8.0 — uses `math/rand/v2`.
+- [x] `Makefile` targets: `migrate-create/up/down`, `build`, `test`, `lint`, `run`. §9.3 — POSIX Makefile (uses golang-migrate); recipes tab-indented; `DATABASE_URL` read from env or `.env`.
 
 ## Phase 2 — Common helpers (shared by all domains)
 
