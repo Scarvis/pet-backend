@@ -1,0 +1,17 @@
+# Binaries & builds
+/bin/
+/dist/
+*.exe
+*.test
+*.out
+
+# Environment & secrets (see ARCHITECTURE.md §9.1)
+.env
+.env.*
+*.pem
+!testdata/*.pem
+
+# Editor / OS noise
+.idea/
+.vscode/
+.DS_Store
