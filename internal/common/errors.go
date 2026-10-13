@@ -81,3 +81,25 @@ func writeJSONError(w http.ResponseWriter, status int, code, message string) {
 		"error": map[string]string{"code": code, "message": message},
 	})
 }
+
+// WriteError renders err as a JSON error body using HTTPStatus for the status
+// code. A typed *Error carries its own code/message; any other error becomes
+// a 500 internal_error (or 409 when it wraps ErrRetryable).
+func WriteError(w http.ResponseWriter, err error) {
+	var e *Error
+	if errors.As(err, &e) {
+		writeJSONError(w, e.Status, e.Code, e.Message)
+		return
+	}
+	if IsRetryable(err) {
+		writeJSONError(w, http.StatusConflict, "conflict", err.Error())
+		return
+	}
+	writeJSONError(w, http.StatusInternalServerError, "internal_error", "internal server error")
+}
+
+// WriteJSON writes v as a JSON response body with status 200.
+func WriteJSON(w http.ResponseWriter, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(v)
+}

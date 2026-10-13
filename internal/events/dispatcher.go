@@ -36,12 +36,16 @@ const (
 // budget alerts after each event's COMMIT (at-least-once); when nil, alerts are
 // logged. OnEventFailed is the financeapp_events_failed_total hook (§10):
 // it fires once per poison event before CatchUp aborts the pass.
+// OnEventProcessed is the financeapp_events_processed_total /
+// financeapp_events_processing_duration_seconds hook (§10): it fires once per
+// successfully handled event with its type and DB-transaction duration.
 type Dispatcher struct {
 	pool *pgxpool.Pool
 	log  *slog.Logger
 
-	Notify        func(ctx context.Context, alerts []budgets.Alert)
-	OnEventFailed func(eventType string)
+	Notify           func(ctx context.Context, alerts []budgets.Alert)
+	OnEventFailed    func(eventType string)
+	OnEventProcessed func(eventType string, d time.Duration)
 }
 
 // NewDispatcher builds a Dispatcher over pool.
@@ -161,6 +165,7 @@ func (d *Dispatcher) processBatch(ctx context.Context) (bool, error) {
 // (§8.0); alerts are captured and delivered afterwards.
 func (d *Dispatcher) processOne(ctx context.Context, e event) error {
 	var alerts []budgets.Alert
+	start := time.Now()
 	err := db.WithSerializable(ctx, d.pool, func(tx pgx.Tx) error {
 		alerts = nil // reset on retry so notifications never duplicate
 		tag, err := tx.Exec(ctx, `INSERT INTO analytics.processed_events (event_id, topic) VALUES ($1, $2) ON CONFLICT DO NOTHING`, e.uid, e.eventType)
@@ -180,6 +185,9 @@ func (d *Dispatcher) processOne(ctx context.Context, e event) error {
 	})
 	if err != nil {
 		return err
+	}
+	if d.OnEventProcessed != nil {
+		d.OnEventProcessed(e.eventType, time.Since(start))
 	}
 	d.deliver(ctx, alerts)
 	return nil

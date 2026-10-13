@@ -63,9 +63,9 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 8 — Wiring: router, entrypoint, Hasura definitions
 
-- [ ] `cmd/server/main.go`: build chi router for all Actions/Events/Cron endpoints; start LISTEN worker goroutine. §7.1
-- [ ] `graphql/actions.graphql`: Action + Event + Cron + custom scalar (`Bigint`) definitions matching §6.4–6.7.
-- [ ] Observability: Prometheus counters/timers per §10 metric names (http requests, events processed/failed/lag, import rows, fx fetch).
+- [x] `cmd/server/main.go`: build chi router for all Actions/Events/Cron endpoints; start LISTEN worker goroutine. §7.1
+- [x] `graphql/actions.graphql`: Action + Event + Cron + custom scalar (`Bigint`) definitions matching §6.4–6.7.
+- [x] Observability: Prometheus counters/timers per §10 metric names (http requests, events processed/failed/lag, import rows, fx fetch).
 
 ## Phase 9 — Deployment & docs
 

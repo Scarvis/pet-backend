@@ -5,19 +5,24 @@ import (
 	"log/slog"
 	"net/http"
 
-	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 // ConnProvider returns a dedicated connection for the request. *pgxpool.Pool
 // satisfies it via Acquire, so db.NewPool's pool can be passed straight in.
 type ConnProvider interface {
-	Acquire(ctx context.Context) (pgx.Conn, error)
+	Acquire(ctx context.Context) (*pgxpool.Conn, error)
 }
 
-//   - Hasura X-Action-Secret verification (section 9.1): a forged call is rejected;
-//   - the `SET LOCAL app.via_action = 'on'` session variable so Go's own queries
-//     bypass the guard trigger on tx.transactions (section 6.3);
-//   - panic recovery into a JSON HTTP error instead of crashing the process.
+// Middleware verifies the Hasura X-Action-Secret header (§9.1, §11) and
+// recovers panics into JSON HTTP errors instead of crashing the process.
+//
+// Note on `app.via_action` (§6.3): the guard trigger only accepts the flag via
+// `SET LOCAL` inside a transaction, on the same connection that runs the
+// UPDATE. A middleware-level connection cannot provide that (handlers check
+// out their own connections from the pool), so each mutating handler sets
+// `SET LOCAL app.via_action = 'on'` inside its own transaction (see e.g. the
+// transaction update/delete paths). The pool is retained for health checks.
 type Middleware struct {
 	pool   ConnProvider
 	secret string
@@ -36,18 +41,6 @@ func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.checkSecret(r) {
 			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid X-Action-Secret")
-			return
-		}
-
-		conn, err := m.pool.Acquire(r.Context())
-		if err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "internal_error", "could not acquire database connection")
-			return
-		}
-		defer conn.Close(r.Context())
-
-		if _, err := conn.Exec(r.Context(), "SET LOCAL app.via_action = 'on'"); err != nil {
-			writeJSONError(w, http.StatusInternalServerError, "internal_error", "failed to set via_action session variable")
 			return
 		}
 

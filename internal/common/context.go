@@ -22,6 +22,13 @@ func withUserID(ctx context.Context, id uuid.UUID) context.Context {
 	return context.WithValue(ctx, userIDCtxKeyVal, id)
 }
 
+// WithUserID returns a copy of ctx carrying id as the acting user. It is the
+// exported wrapper cmd/server uses to inject the Hasura-forwarded
+// X-Hasura-User-ID into request context before dispatching (§7.1).
+func WithUserID(ctx context.Context, id uuid.UUID) context.Context {
+	return withUserID(ctx, id)
+}
+
 // CurrentUser returns the acting user for an Action handler, or NotFound when no
 // current user is set in context (§7.1). The returned *Error renders as HTTP 404 so
 // a missing identity surfaces cleanly through the router and panic recovery.

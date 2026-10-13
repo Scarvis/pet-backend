@@ -1,0 +1,188 @@
+# FinanceApp Hasura Actions / Events / Cron definitions.
+#
+# Source: ARCHITECTURE.md §6.4 (Actions), §6.5 (Events), §6.6 (Cron),
+# §6.7 (Action schemas). Amounts cross the wire as the custom Bigint scalar
+# (decimal string, e.g. "12345"): GraphQL Int is 32-bit and JS numbers are
+# exact only up to 2^53. Hasura runs with
+# HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true so bigint/numeric columns such
+# as balance_minor are returned as strings too.
+#
+# Each Mutation below maps to a Go endpoint served by cmd/server (LISTEN_ADDR,
+# default :9090). Hasura sends the shared secret as X-Action-Secret
+# (HASURA_ACTION_SECRET), verified by the Go middleware, and forwards the
+# authenticated subject as X-Hasura-User-ID session variables.
+
+# 64-bit signed integer serialized as a decimal string.
+scalar Bigint
+
+# ---------------------------------------------------------------------------
+# §6.7 inputs
+# ---------------------------------------------------------------------------
+
+input CreateTransactionInput {
+  account_id: uuid!
+  category_id: uuid
+  kind: TransactionKind!          # income | expense
+  amount_minor: Bigint!           # > 0
+  currency: String!               # ISO 4217 / crypto
+  description: String
+  occurred_at: timestamptz!
+}
+
+input CreateTransferInput {
+  from_account_id: uuid!
+  to_account_id: uuid!
+  amount_minor: Bigint!
+  currency: String!
+  description: String
+  occurred_at: timestamptz!
+}
+
+input CreateTradeInput {
+  portfolio_id: uuid!
+  asset_id: uuid!
+  side: TradeSide!                # buy | sell
+  quantity: numeric!
+  price_minor: Bigint!
+  executed_at: timestamptz!
+}
+
+input StartImportInput {
+  account_id: uuid!
+  file_base64: String!
+  file_name: String!
+  file_format: ImportFormat!      # csv | ofx
+}
+
+input UpdateTransactionInput {
+  transaction_id: uuid!
+  account_id: uuid
+  kind: TransactionKind
+  amount_minor: Bigint
+  currency: String
+  occurred_at: timestamptz
+}
+
+input DeleteTransactionInput {
+  transaction_id: uuid!
+}
+
+input RegisterInput {
+  email: String!
+  password: String!
+}
+
+input LoginInput {
+  email: String!
+  password: String!
+}
+
+input RefreshTokenInput {
+  refresh_token: String!
+}
+
+input CreateAccountInput {
+  name: String!
+  type: String!                   # cash | card | deposit | debt
+  currency: String!
+}
+
+input FetchFxRatesInput {
+  bases: [String!]
+  as_of: timestamptz
+}
+
+input RebuildAnalyticsInput {
+  from: timestamptz
+}
+
+# ---------------------------------------------------------------------------
+# §6.7 enums
+# ---------------------------------------------------------------------------
+
+enum TransactionKind { income expense transfer }
+enum TradeSide { buy sell }
+enum ImportFormat { csv ofx }
+
+# ---------------------------------------------------------------------------
+# §6.7 outputs
+# ---------------------------------------------------------------------------
+
+type CreateTransactionOutput { transaction_id: uuid!, new_balance_minor: Bigint!, fx_applied: Boolean! }
+type CreateTradeOutput { holding_id: uuid!, quantity: numeric!, avg_cost_minor: Bigint! }
+type TransactionMutationOutput { transaction_id: uuid!, new_balance_minor: Bigint! }
+type StartImportOutput { job_id: uuid!, total_rows: Int! }
+
+type AuthOutput { access_token: String!, refresh_token: String!, expires_in: Int! }
+type CreateTransferOutput { transaction_id: uuid!, from_balance_minor: Bigint!, to_balance_minor: Bigint!, fx_applied: Boolean! }
+type FetchFxRatesOutput { rows_written: Int! }
+type OkOutput { ok: Boolean! }
+
+# ---------------------------------------------------------------------------
+# §6.4 Actions (synchronous business logic in Go)
+# ---------------------------------------------------------------------------
+
+type Mutation {
+  # POST /actions/auth/register — Organization + user + system categories (§8.1)
+  register(input: RegisterInput!): AuthOutput
+  # POST /actions/auth/login — JWT + refresh (§8.1)
+  login(input: LoginInput!): AuthOutput
+  # POST /actions/auth/refresh — Token rotation (§8.1)
+  refreshToken(input: RefreshTokenInput!): AuthOutput
+  # POST /actions/account/create — Validation, initial balance
+  createAccount(input: CreateAccountInput!): AccountOutput
+  # POST /actions/tx/create — Validation + balance + ledger (§8.2)
+  createTransaction(input: CreateTransactionInput!): CreateTransactionOutput
+  # POST /actions/tx/transfer — Two-sided transfer (§8.3)
+  createTransfer(input: CreateTransferInput!): CreateTransferOutput
+  # POST /actions/tx/update — Change amount/account/kind + balance correction (§8.2)
+  updateTransaction(input: UpdateTransactionInput!): CreateTransactionOutput
+  # POST /actions/tx/delete — Soft delete + reversal of balance and ledger (§8.2)
+  deleteTransaction(input: DeleteTransactionInput!): TransactionMutationOutput
+  # POST /actions/invest/trade — Trade → recalculation of holdings (§8.5)
+  createTrade(input: CreateTradeInput!): CreateTradeOutput
+  # POST /actions/import/start — File upload, parsing launch (§8.6)
+  startImport(input: StartImportInput!): StartImportOutput
+  # POST /actions/fx/fetch — Manual rate request (§8.7)
+  fetchFxRates(input: FetchFxRatesInput!): FetchFxRatesOutput
+  # POST /actions/analytics/rebuild — Aggregate rebuild (§8.7)
+  rebuildAnalytics(input: RebuildAnalyticsInput!): OkOutput
+}
+
+# createAccount returns the account row with its balance as a Bigint string.
+type AccountOutput {
+  id: uuid!
+  org_id: uuid!
+  owner_user_id: uuid!
+  name: String!
+  type: String!
+  currency: String!
+  balance_minor: Bigint!
+  created_at: timestamptz!
+  updated_at: timestamptz!
+}
+
+# ---------------------------------------------------------------------------
+# §6.5 Events (asynchronous webhooks; Go drains app.events from its cursor,
+# so each webhook is a catch-up trigger — see §8.8)
+# ---------------------------------------------------------------------------
+#
+# | Event              | Table              | Condition | Endpoint            |
+# |--------------------|--------------------|-----------|---------------------|
+# | transaction_inserted | tx.transactions    | INSERT    | /events/tx/created  |
+# | transaction_updated  | tx.transactions    | UPDATE    | /events/tx/updated  |
+# | trade_inserted       | invest.trades      | INSERT    | /events/invest/trade|
+# | import_job_updated   | import.import_jobs | UPDATE    | /events/import/job  |
+# | fx_rate_inserted     | fx.rates           | INSERT    | /events/fx/rate     |
+
+# ---------------------------------------------------------------------------
+# §6.6 Cron Triggers
+# ---------------------------------------------------------------------------
+#
+# | Name                | Schedule    | Webhook                      |
+# |---------------------|-------------|------------------------------|
+# | fetch_fx_rates      | 0 6 * * *   | POST /cron/fetch_fx_rates    |
+# | rebuild_daily_summary | 30 0 * * *| POST /cron/rebuild_daily_summary |
+# | snapshot_net_worth  | 0 1 * * *   | POST /cron/snapshot_net_worth|
+# | rotate_budget_progress | 0 0 * * 1| POST /cron/rotate_budget_progress |
+# | cleanup_tokens      | 0 3 * * 0   | POST /cron/cleanup_tokens    |
