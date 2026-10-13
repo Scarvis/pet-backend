@@ -51,9 +51,9 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 6 — Invest & imports (async workers)
 
-- [ ] `internal/invest/handler.go`, `trade.go`, `valuation.go`: trade execution, holdings recalc, position valuation via `price_history`. §8.5
-- [ ] `internal/imports/parser_csv.go`, `parser_ofx.go`: row parsing; dedup hash with FITID / occurrence index. §8.6
-- [ ] `internal/imports/dedup.go`, `mapper.go`: cross-job duplicate lookup, map raw rows → transactions. §8.6
+- [x] `internal/invest/handler.go`, `trade.go`, `valuation.go`: trade execution, holdings recalc, position valuation via `price_history`. §8.5
+- [x] `internal/imports/parser_csv.go`, `parser_ofx.go`: row parsing; dedup hash with FITID / occurrence index. §8.6
+- [x] `internal/imports/dedup.go`, `mapper.go`: cross-job duplicate lookup, map raw rows → transactions. §8.6
 
 ## Phase 7 — FX fetcher + event worker (LISTEN)
 
