@@ -82,6 +82,26 @@ func decodeInput(r *http.Request, dst any) (map[string]string, error) {
 	if len(bytes.TrimSpace(raw)) == 0 || string(bytes.TrimSpace(raw)) == "null" {
 		raw = body // raw-object fallback for manual cron calls
 	}
+	// Every Action here declares a single argument named "input", so the
+	// Hasura webhook nests the arguments once more as {"input": {...}} (§6.4).
+	// Unwrap that layer; without it DisallowUnknownFields rejects the body.
+	if fields := map[string]json.RawMessage{}; json.Unmarshal(raw, &fields) == nil {
+		if inner, ok := fields["input"]; ok && len(bytes.TrimSpace(inner)) > 0 &&
+			bytes.HasPrefix(bytes.TrimSpace(inner), []byte("{")) {
+			raw = inner
+		}
+	}
+	if string(bytes.TrimSpace(raw)) == string(bytes.TrimSpace(body)) {
+		// Hasura cron triggers wrap the payload as
+		// {"name","scheduled_time","payload"}; unwrap it so the
+		// endpoint struct decodes without unknown-field errors (§6.6).
+		var cron struct {
+			Payload json.RawMessage `json:"payload"`
+		}
+		if err := json.Unmarshal(body, &cron); err == nil && len(bytes.TrimSpace(cron.Payload)) > 0 {
+			raw = cron.Payload
+		}
+	}
 	dec := json.NewDecoder(bytes.NewReader(raw))
 	dec.DisallowUnknownFields()
 	if err := dec.Decode(dst); err != nil {
@@ -123,10 +143,27 @@ func handle[Req any, Res any](w http.ResponseWriter, r *http.Request, fn func(ct
 	ctx := withIdentity(r.Context(), r, sessionVars)
 	res, err := fn(ctx, req)
 	if err != nil {
-		common.WriteError(w, err)
+		writeActionError(w, err)
 		return
 	}
 	common.WriteJSON(w, res)
+}
+
+// writeActionError renders err in the shape Hasura Actions expect on failure:
+// {"message": ...} with the mapped HTTP status (§6.4). The shared
+// {"error": {...}} shape (common.WriteError) stays for Events/Cron delivery,
+// which only cares about the status code.
+func writeActionError(w http.ResponseWriter, err error) {
+	msg := "internal server error"
+	var e *common.Error
+	if errors.As(err, &e) {
+		msg = e.Message
+	} else if common.IsRetryable(err) {
+		msg = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(common.HTTPStatus(err))
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
 }
 
 func toBigint(v int64) common.Bigint { return common.Bigint(strconv.FormatInt(v, 10)) }
