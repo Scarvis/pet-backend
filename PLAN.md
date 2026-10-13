@@ -37,11 +37,14 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 4 — Transactions & accounts (core)
 
-- [ ] `internal/accounts/`: account CRUD + archiving (`deleted_at`). §7.1
-- [ ] `internal/transactions/handler.go`: create / update / delete transaction handlers. §8.2
-- [ ] `internal/transactions/balance.go`: balance recalculation, FX conversion via nearest rate. §8.2
-- [ ] `internal/transactions/transfer.go`: two-sided transfer with currency conversion + ledger rows. §8.3
-- [ ] Wire SERIALIZABLE retry (§Phase 1) around every mutating handler; lock accounts in ascending id order to avoid deadlocks. §8.0, §8.2
+- [x] `internal/accounts/`: account CRUD + archiving (`deleted_at`). §7.1 ✅ `handler.go` implements Create/List/Get/Archive/Unarchive with soft-delete and org ownership checks via `common.ActingOrg`.
+- [x] `internal/transactions/handler.go`: create / update / delete transaction handlers. §8.2 ✅ all three run in one SERIALIZABLE tx (`db.WithSerializable`); update/delete reverse the original effect from the ledger net `SUM(delta_minor)` per `ref_id`, never from current FX rates; transfers rejected by update.
+- [x] `internal/transactions/balance.go`: balance recalculation, FX conversion via nearest rate. §8.2 ✅ `nearestRate` (most recent rate on/before the date), `convertToAccountMinor`, `applyLedgerAndBalance` (ledger row + `balance_minor` update), `reverseEffect`.
+- [x] `internal/transactions/transfer.go`: two-sided transfer with currency conversion + ledger rows. §8.3 ✅ single transfer row, source −amount / target +amount ledger entries, target-leg FX conversion, both accounts locked in ascending id order.
+- [x] Wire SERIALIZABLE retry (§Phase 1) around every mutating handler; lock accounts in ascending id order to avoid deadlocks. §8.0, §8.2 ✅ every mutating handler uses `WithSerializable`; `sort.Slice` on account ids before `FOR UPDATE`.
+- [x] Tests: `internal/common/money_test.go` (FX math, minor units, `Bigint` wire type), `internal/transactions/handler_test.go` (`validateKind`, `sameDay`). All pass; `go build ./...`, `go vet ./...`, gofmt clean.
+
+> **Note:** like Phase 3, the handlers compile and vet cleanly but need a live DB to run against — `db_schema.sql` / migration 0001 are still open (see Phase 9). Money stays in integer minor units end-to-end; currency codes validated against `fx.currencies`.
 
 ## Phase 5 — Budgets & analytics (event-driven recalculation)
 
