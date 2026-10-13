@@ -1,0 +1,22 @@
+table:
+  name: v_transactions_full
+  schema: tx
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id

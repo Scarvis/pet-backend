@@ -1,0 +1,48 @@
+table:
+  name: import_jobs
+  schema: import
+object_relationships:
+  - name: account
+    using:
+      foreign_key_constraint_on: account_id
+array_relationships:
+  - name: raw_rows
+    using:
+      foreign_key_constraint_on:
+        column: import_job_id
+        table:
+          name: raw_rows
+          schema: import
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+event_triggers:
+  - name: import_job_updated
+    definition:
+      enable_manual: false
+      update:
+        columns: '*'
+    retry_conf:
+      interval_sec: 15
+      num_retries: 3
+      timeout_sec: 100
+    webhook: http://backend:9090/events/import/job
+    headers:
+      - name: X-Action-Secret
+        value_from_env: HASURA_ACTION_SECRET

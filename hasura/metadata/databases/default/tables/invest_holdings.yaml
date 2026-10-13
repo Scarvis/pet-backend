@@ -1,0 +1,40 @@
+table:
+  name: holdings
+  schema: invest
+object_relationships:
+  - name: asset
+    using:
+      foreign_key_constraint_on: asset_id
+  - name: portfolio
+    using:
+      foreign_key_constraint_on: portfolio_id
+array_relationships:
+  - name: trades
+    using:
+      foreign_key_constraint_on:
+        column: holding_id
+        table:
+          name: trades
+          schema: invest
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        portfolio:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        portfolio:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        portfolio:
+          org_id:
+            _eq: X-Hasura-Org-Id

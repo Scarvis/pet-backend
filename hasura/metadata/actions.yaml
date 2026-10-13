@@ -1,0 +1,218 @@
+actions:
+  - name: createAccount
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/account/create
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/account/create
+  - name: createTrade
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/invest/trade
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/invest/trade
+  - name: createTransaction
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/tx/create
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: member
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/tx/create
+  - name: createTransfer
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/tx/transfer
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: member
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/tx/transfer
+  - name: deleteTransaction
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/tx/delete
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: member
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/tx/delete
+  - name: fetchFxRates
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/fx/fetch
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/fx/fetch
+  - name: login
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/auth/login
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: anonymous
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/auth/login
+  - name: rebuildAnalytics
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/analytics/rebuild
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/analytics/rebuild
+  - name: refreshToken
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/auth/refresh
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: anonymous
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/auth/refresh
+  - name: register
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/auth/register
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: anonymous
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/auth/register
+  - name: startImport
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/import/start
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/import/start
+  - name: updateTransaction
+    definition:
+      kind: synchronous
+      handler: http://backend:9090/actions/tx/update
+      forward_client_headers: true
+      headers:
+        - name: X-Action-Secret
+          value_from_env: HASURA_ACTION_SECRET
+      timeout: 120
+    permissions:
+      - role: member
+      - role: admin
+      - role: owner
+    comment: Go backend /actions/tx/update
+custom_types:
+  enums:
+    - name: TransactionKind
+      values:
+        - description: null
+          is_deprecated: null
+          value: income
+        - description: null
+          is_deprecated: null
+          value: expense
+        - description: null
+          is_deprecated: null
+          value: transfer
+    - name: TradeSide
+      values:
+        - description: null
+          is_deprecated: null
+          value: buy
+        - description: null
+          is_deprecated: null
+          value: sell
+    - name: ImportFormat
+      values:
+        - description: null
+          is_deprecated: null
+          value: csv
+        - description: null
+          is_deprecated: null
+          value: ofx
+  input_objects:
+    - name: RegisterInput
+    - name: LoginInput
+    - name: RefreshTokenInput
+    - name: CreateAccountInput
+    - name: CreateTransactionInput
+    - name: CreateTransferInput
+    - name: CreateTradeInput
+    - name: StartImportInput
+    - name: UpdateTransactionInput
+    - name: DeleteTransactionInput
+    - name: FetchFxRatesInput
+    - name: RebuildAnalyticsInput
+  objects:
+    - name: CreateTransactionOutput
+    - name: CreateTradeOutput
+    - name: TransactionMutationOutput
+    - name: StartImportOutput
+    - name: AuthOutput
+    - name: CreateTransferOutput
+    - name: FetchFxRatesOutput
+    - name: OkOutput
+    - name: AccountOutput
+  scalars:
+    - name: Bigint

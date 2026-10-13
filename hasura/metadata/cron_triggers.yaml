@@ -1,0 +1,65 @@
+- name: cleanup_tokens
+  webhook: http://backend:9090/cron/cleanup_tokens
+  schedule: 0 3 * * 0
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 3
+    retry_interval_seconds: 10
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+  headers:
+    - name: X-Action-Secret
+      value_from_env: HASURA_ACTION_SECRET
+- name: fetch_fx_rates
+  webhook: http://backend:9090/cron/fetch_fx_rates
+  schedule: 0 6 * * *
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 3
+    retry_interval_seconds: 10
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+  headers:
+    - name: X-Action-Secret
+      value_from_env: HASURA_ACTION_SECRET
+- name: rebuild_daily_summary
+  webhook: http://backend:9090/cron/rebuild_daily_summary
+  schedule: 30 0 * * *
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 3
+    retry_interval_seconds: 10
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+  headers:
+    - name: X-Action-Secret
+      value_from_env: HASURA_ACTION_SECRET
+- name: rotate_budget_progress
+  webhook: http://backend:9090/cron/rotate_budget_progress
+  schedule: 0 0 * * 1
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 3
+    retry_interval_seconds: 10
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+  headers:
+    - name: X-Action-Secret
+      value_from_env: HASURA_ACTION_SECRET
+- name: snapshot_net_worth
+  webhook: http://backend:9090/cron/snapshot_net_worth
+  schedule: 0 1 * * *
+  include_in_metadata: true
+  payload: {}
+  retry_conf:
+    num_retries: 3
+    retry_interval_seconds: 10
+    timeout_seconds: 60
+    tolerance_seconds: 21600
+  headers:
+    - name: X-Action-Secret
+      value_from_env: HASURA_ACTION_SECRET

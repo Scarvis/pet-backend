@@ -1,0 +1,75 @@
+table:
+  name: budget_limits
+  schema: budget
+object_relationships:
+  - name: budget
+    using:
+      foreign_key_constraint_on: budget_id
+  - name: category
+    using:
+      foreign_key_constraint_on: category_id
+array_relationships:
+  - name: progress
+    using:
+      foreign_key_constraint_on:
+        column: budget_limit_id
+        table:
+          name: budget_progress
+          schema: budget
+insert_permissions:
+  - role: owner
+    permission:
+      check:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id
+      columns:
+        - budget_id
+        - category_id
+        - limit_minor
+        - currency
+        - include_subcategories
+        - alert_pct
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: owner
+    permission:
+      columns:
+        - category_id
+        - limit_minor
+        - currency
+        - include_subcategories
+        - alert_pct
+      filter:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id
+      check: null
+delete_permissions:
+  - role: owner
+    permission:
+      filter:
+        budget:
+          org_id:
+            _eq: X-Hasura-Org-Id

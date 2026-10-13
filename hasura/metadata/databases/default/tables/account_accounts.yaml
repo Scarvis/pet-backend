@@ -1,0 +1,60 @@
+table:
+  name: accounts
+  schema: account
+object_relationships:
+  - name: owner
+    using:
+      foreign_key_constraint_on: owner_user_id
+array_relationships:
+  - name: ledger_entries
+    using:
+      foreign_key_constraint_on:
+        column: account_id
+        table:
+          name: balance_ledger
+          schema: account
+insert_permissions:
+  - role: owner
+    permission:
+      check:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      columns:
+        - org_id
+        - owner_user_id
+        - name
+        - type
+        - currency
+        - is_archived
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: owner
+    permission:
+      columns:
+        - name
+        - type
+        - currency
+        - is_archived
+        - deleted_at
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null

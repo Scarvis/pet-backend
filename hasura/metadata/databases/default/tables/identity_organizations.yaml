@@ -1,0 +1,41 @@
+table:
+  name: organizations
+  schema: identity
+array_relationships:
+  - name: users
+    using:
+      foreign_key_constraint_on:
+        column: org_id
+        table:
+          name: users
+          schema: identity
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        id:
+          _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: owner
+    permission:
+      columns:
+        - name
+        - plan
+        - base_currency
+      filter:
+        id:
+          _eq: X-Hasura-Org-Id
+      check: null

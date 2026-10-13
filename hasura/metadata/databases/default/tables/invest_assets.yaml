@@ -1,0 +1,31 @@
+table:
+  name: assets
+  schema: invest
+array_relationships:
+  - name: holdings
+    using:
+      foreign_key_constraint_on:
+        column: asset_id
+        table:
+          name: holdings
+          schema: invest
+  - name: prices
+    using:
+      foreign_key_constraint_on:
+        column: asset_id
+        table:
+          name: price_history
+          schema: invest
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter: {}
+  - role: owner
+    permission:
+      columns: '*'
+      filter: {}
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}

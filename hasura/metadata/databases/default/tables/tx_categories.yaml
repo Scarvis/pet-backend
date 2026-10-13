@@ -1,0 +1,91 @@
+table:
+  name: categories
+  schema: tx
+array_relationships:
+  - name: transactions
+    using:
+      foreign_key_constraint_on:
+        column: category_id
+        table:
+          name: transactions
+          schema: tx
+insert_permissions:
+  - role: member
+    permission:
+      check:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      columns:
+        - org_id
+        - parent_id
+        - name
+        - kind
+        - icon
+        - is_system
+  - role: owner
+    permission:
+      check:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      columns:
+        - org_id
+        - parent_id
+        - name
+        - kind
+        - icon
+        - is_system
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: member
+    permission:
+      columns:
+        - parent_id
+        - name
+        - kind
+        - icon
+        - is_system
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+  - role: owner
+    permission:
+      columns:
+        - parent_id
+        - name
+        - kind
+        - icon
+        - is_system
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+delete_permissions:
+  - role: member
+    permission:
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id

@@ -1,0 +1,53 @@
+table:
+  name: users
+  schema: identity
+object_relationships:
+  - name: organization
+    using:
+      foreign_key_constraint_on: org_id
+select_permissions:
+  - role: member
+    permission:
+      columns:
+        - id
+        - org_id
+        - email
+        - display_name
+        - status
+        - email_verified_at
+        - created_at
+        - updated_at
+        - deleted_at
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns:
+        - id
+        - org_id
+        - email
+        - display_name
+        - status
+        - email_verified_at
+        - created_at
+        - updated_at
+        - deleted_at
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns:
+        - id
+        - org_id
+        - email
+        - display_name
+        - status
+        - email_verified_at
+        - created_at
+        - updated_at
+        - deleted_at
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id

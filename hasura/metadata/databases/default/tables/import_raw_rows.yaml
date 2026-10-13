@@ -1,0 +1,29 @@
+table:
+  name: raw_rows
+  schema: import
+object_relationships:
+  - name: import_job
+    using:
+      foreign_key_constraint_on: import_job_id
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        import_job:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        import_job:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        import_job:
+          org_id:
+            _eq: X-Hasura-Org-Id

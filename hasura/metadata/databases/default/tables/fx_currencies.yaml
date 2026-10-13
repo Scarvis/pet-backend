@@ -1,0 +1,16 @@
+table:
+  name: currencies
+  schema: fx
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter: {}
+  - role: owner
+    permission:
+      columns: '*'
+      filter: {}
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}

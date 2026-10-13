@@ -1,0 +1,30 @@
+table:
+  name: rates
+  schema: fx
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter: {}
+  - role: owner
+    permission:
+      columns: '*'
+      filter: {}
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}
+event_triggers:
+  - name: fx_rate_inserted
+    definition:
+      enable_manual: false
+      insert:
+        columns: '*'
+    retry_conf:
+      interval_sec: 15
+      num_retries: 3
+      timeout_sec: 100
+    webhook: http://backend:9090/events/fx/rate
+    headers:
+      - name: X-Action-Secret
+        value_from_env: HASURA_ACTION_SECRET

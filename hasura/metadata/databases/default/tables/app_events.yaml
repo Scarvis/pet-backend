@@ -1,0 +1,8 @@
+table:
+  name: events
+  schema: app
+select_permissions:
+  - role: owner
+    permission:
+      columns: '*'
+      filter: {}

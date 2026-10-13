@@ -1,0 +1,86 @@
+table:
+  name: transactions
+  schema: tx
+object_relationships:
+  - name: account
+    using:
+      foreign_key_constraint_on: account_id
+  - name: category
+    using:
+      foreign_key_constraint_on: category_id
+  - name: to_account
+    using:
+      foreign_key_constraint_on: to_account_id
+array_relationships:
+  - name: transaction_tags
+    using:
+      foreign_key_constraint_on:
+        column: transaction_id
+        table:
+          name: transaction_tags
+          schema: tx
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: member
+    permission:
+      columns:
+        - category_id
+        - description
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+  - role: owner
+    permission:
+      columns:
+        - category_id
+        - description
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+event_triggers:
+  - name: transaction_inserted
+    definition:
+      enable_manual: false
+      insert:
+        columns: '*'
+    retry_conf:
+      interval_sec: 15
+      num_retries: 3
+      timeout_sec: 100
+    webhook: http://backend:9090/events/tx/created
+    headers:
+      - name: X-Action-Secret
+        value_from_env: HASURA_ACTION_SECRET
+  - name: transaction_updated
+    definition:
+      enable_manual: false
+      update:
+        columns: '*'
+    retry_conf:
+      interval_sec: 15
+      num_retries: 3
+      timeout_sec: 100
+    webhook: http://backend:9090/events/tx/updated
+    headers:
+      - name: X-Action-Secret
+        value_from_env: HASURA_ACTION_SECRET

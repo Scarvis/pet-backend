@@ -1,0 +1,75 @@
+table:
+  name: tags
+  schema: tx
+array_relationships:
+  - name: transaction_tags
+    using:
+      foreign_key_constraint_on:
+        column: tag_id
+        table:
+          name: transaction_tags
+          schema: tx
+insert_permissions:
+  - role: member
+    permission:
+      check:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      columns:
+        - org_id
+        - name
+  - role: owner
+    permission:
+      check:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      columns:
+        - org_id
+        - name
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: viewer
+    permission:
+      columns: '*'
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+update_permissions:
+  - role: member
+    permission:
+      columns:
+        - name
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+  - role: owner
+    permission:
+      columns:
+        - name
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+      check: null
+delete_permissions:
+  - role: member
+    permission:
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
+  - role: owner
+    permission:
+      filter:
+        org_id:
+          _eq: X-Hasura-Org-Id
