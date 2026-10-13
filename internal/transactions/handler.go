@@ -91,14 +91,33 @@ func (h *Handler) CreateTransaction(ctx context.Context, input CreateTransaction
 	}
 
 	var out CreateTransactionOutput
+	curOrg, err := common.ActingOrg(ctx, h.pool)
+	if err != nil {
+		return nil, err
+	}
 	err = db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
-		var accID uuid.UUID
+		var accID, accOrg uuid.UUID
 		var currency string
-		if err := tx.QueryRow(ctx, `SELECT id, currency FROM account.accounts WHERE id = $1 AND deleted_at IS NULL`, input.AccountID).Scan(&accID, &currency); err != nil {
+		if err := tx.QueryRow(ctx, `SELECT id, org_id, currency FROM account.accounts WHERE id = $1 AND deleted_at IS NULL`, input.AccountID).Scan(&accID, &accOrg, &currency); err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return common.Wrap(common.NotFound("account not found"))
 			}
 			return common.Wrap(err)
+		}
+		if accOrg != curOrg {
+			return common.Wrap(common.NotFound("account not found"))
+		}
+		if input.CategoryID != nil {
+			var catOrg uuid.UUID
+			if err := tx.QueryRow(ctx, `SELECT org_id FROM tx.categories WHERE id = $1`, *input.CategoryID).Scan(&catOrg); err != nil {
+				if errors.Is(err, pgx.ErrNoRows) {
+					return common.Wrap(common.NotFound("category not found"))
+				}
+				return common.Wrap(err)
+			}
+			if catOrg != curOrg {
+				return common.Wrap(common.NotFound("category not found"))
+			}
 		}
 
 		delta, fxApplied, err := h.convertToAccountMinor(ctx, amount, input.Currency, currency, input.OccurredAt)
@@ -110,8 +129,8 @@ func (h *Handler) CreateTransaction(ctx context.Context, input CreateTransaction
 		}
 
 		var txID uuid.UUID
-		_, err = tx.Exec(ctx, `INSERT INTO tx.transactions (org_id, account_id, category_id, kind, amount_minor, currency, amount_in_account_currency_minor, description, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'manual') RETURNING id`,
-			accID, input.AccountID, input.CategoryID, input.Kind, amount, input.Currency, delta, input.Description, input.OccurredAt)
+		err = tx.QueryRow(ctx, `INSERT INTO tx.transactions (org_id, account_id, category_id, kind, amount_minor, currency, amount_in_account_currency_minor, description, occurred_at, source) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'manual') RETURNING id`,
+			curOrg, input.AccountID, input.CategoryID, input.Kind, amount, input.Currency, delta, input.Description, input.OccurredAt).Scan(&txID)
 		if err != nil {
 			return common.Wrap(err)
 		}
@@ -120,7 +139,7 @@ func (h *Handler) CreateTransaction(ctx context.Context, input CreateTransaction
 		if input.Kind == "expense" {
 			sign = -1
 		}
-		if err := applyLedgerAndBalance(ctx, tx, accID, sign*delta, "transaction"); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, accID, sign*delta, "transaction", txID); err != nil {
 			return common.Wrap(err)
 		}
 
@@ -224,12 +243,16 @@ func (h *Handler) UpdateTransaction(ctx context.Context, input UpdateTransaction
 		target := *newAccount
 		var targetCurrency string
 		if input.AccountID != nil {
-			err = tx.QueryRow(ctx, `SELECT currency FROM account.accounts WHERE id = $1 AND deleted_at IS NULL`, *input.AccountID).Scan(&targetCurrency)
+			var targetOrg uuid.UUID
+			err = tx.QueryRow(ctx, `SELECT org_id, currency FROM account.accounts WHERE id = $1 AND deleted_at IS NULL`, *input.AccountID).Scan(&targetOrg, &targetCurrency)
 			if errors.Is(err, pgx.ErrNoRows) {
 				return common.Wrap(common.NotFound("account not found"))
 			}
 			if err != nil {
 				return common.Wrap(err)
+			}
+			if targetOrg != curOrg {
+				return common.Wrap(common.NotFound("account not found"))
 			}
 		} else {
 			targetCurrency = currency // existing account's currency (loaded above)
@@ -246,7 +269,7 @@ func (h *Handler) UpdateTransaction(ctx context.Context, input UpdateTransaction
 		if delta < 0 {
 			return common.Wrap(common.BadRequest("converted amount must be non-negative"))
 		}
-		if err := applyLedgerAndBalance(ctx, tx, target, sign*delta, "transaction"); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, target, sign*delta, "transaction", txID); err != nil {
 			return common.Wrap(err)
 		}
 

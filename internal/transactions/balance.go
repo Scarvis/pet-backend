@@ -59,12 +59,15 @@ func (h *Handler) convertToAccountMinor(ctx context.Context, amountMinor int64, 
 }
 
 // applyLedgerAndBalance records a movement on accountID and adjusts its balance by
-// delta. It is used both to apply a transaction's effect (reason='transaction') and
-// to reverse it (reason='adjustment'). The ledger row is written before the balance
-// update so the append-only history reflects the change first (§8.2 step 5). Accounts
-// that are archived (deleted_at set) are left untouched.
-func applyLedgerAndBalance(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, delta int64, reason string) error {
-	if _, err := tx.Exec(ctx, `INSERT INTO account.balance_ledger (account_id, delta_minor, reason, ref_id) VALUES ($1, $2, $3, NULL)`, accountID, delta, reason); err != nil {
+// delta. It is used both to apply a transaction's effect (reason='transaction'/'transfer')
+// and to reverse it (reason='adjustment'). Every row carries the owning transaction's
+// id in ref_id so reversals can re-sum the effect from the ledger instead of current
+// FX rates (§8.2 step 4); reversal rows share the same ref_id so repeated
+// reverse/apply cycles keep summing to the latest effect. The ledger row is written
+// before the balance update so the append-only history reflects the change first
+// (§8.2 step 5). Accounts that are archived (deleted_at set) are left untouched.
+func applyLedgerAndBalance(ctx context.Context, tx pgx.Tx, accountID uuid.UUID, delta int64, reason string, refID uuid.UUID) error {
+	if _, err := tx.Exec(ctx, `INSERT INTO account.balance_ledger (account_id, delta_minor, reason, ref_id) VALUES ($1, $2, $3, $4)`, accountID, delta, reason, refID); err != nil {
 		return common.Wrap(err)
 	}
 	if _, err := tx.Exec(ctx, `UPDATE account.accounts SET balance_minor = balance_minor + $2 WHERE id = $1 AND deleted_at IS NULL`, accountID, delta); err != nil {
@@ -100,7 +103,7 @@ func reverseEffect(ctx context.Context, tx pgx.Tx, refID uuid.UUID) (map[uuid.UU
 	reversal := map[uuid.UUID]int64{}
 	for accID, sum := range net {
 		d := -sum
-		if err := applyLedgerAndBalance(ctx, tx, accID, d, "adjustment"); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, accID, d, "adjustment", refID); err != nil {
 			return nil, err
 		}
 		reversal[accID] = d

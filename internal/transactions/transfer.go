@@ -98,18 +98,18 @@ func (h *Handler) CreateTransfer(ctx context.Context, input CreateTransferInput)
 		}
 
 		var txID uuid.UUID
-		_, err = tx.Exec(ctx, `INSERT INTO tx.transactions (org_id, account_id, to_account_id, kind, amount_minor, currency, amount_in_account_currency_minor, description, occurred_at, source) VALUES ($1, $2, $3, 'transfer', $4, $5, $6, $7, $8, 'manual') RETURNING id`,
-			curOrg, from.ID, to.ID, amount, from.Currency, delta, input.Description, input.OccurredAt)
+		err = tx.QueryRow(ctx, `INSERT INTO tx.transactions (org_id, account_id, to_account_id, kind, amount_minor, currency, amount_in_account_currency_minor, description, occurred_at, source) VALUES ($1, $2, $3, 'transfer', $4, $5, $6, $7, $8, 'manual') RETURNING id`,
+			curOrg, from.ID, to.ID, amount, from.Currency, delta, input.Description, input.OccurredAt).Scan(&txID)
 		if err != nil {
 			return common.Wrap(err)
 		}
 
 		// Two ledger rows: source −amount, target +amount (§8.3 step 5). Each call
 		// also adjusts the corresponding balance.
-		if err := applyLedgerAndBalance(ctx, tx, from.ID, -delta, "transfer"); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, from.ID, -delta, "transfer", txID); err != nil {
 			return common.Wrap(err)
 		}
-		if err := applyLedgerAndBalance(ctx, tx, to.ID, delta, "transfer"); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, to.ID, delta, "transfer", txID); err != nil {
 			return common.Wrap(err)
 		}
 
