@@ -57,9 +57,9 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 7 — FX fetcher + event worker (LISTEN)
 
-- [ ] `internal/fx/handler.go`, `fetcher.go`: daily rate load with `ON CONFLICT DO UPDATE`; trigger publishes event. §8.7
-- [ ] `internal/events/listener.go`: reconnect loop, advisory-lock leader election (`pg_try_advisory_lock`), LISTEN-first + catch-up. §8.8
-- [ ] `internal/events/dispatcher.go`: per-event transaction (idempotency via `analytics.processed_events`, cursor update). §8.8
+- [x] `internal/fx/handler.go`, `fetcher.go`: daily rate load with `ON CONFLICT DO UPDATE`; trigger publishes event. §8.7
+- [x] `internal/events/listener.go`: reconnect loop, advisory-lock leader election (`pg_try_advisory_lock`), LISTEN-first + catch-up. §8.8
+- [x] `internal/events/dispatcher.go`: per-event transaction (idempotency via `analytics.processed_events`, cursor update). §8.8
 
 ## Phase 8 — Wiring: router, entrypoint, Hasura definitions
 
