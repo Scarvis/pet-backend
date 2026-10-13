@@ -939,7 +939,7 @@ operator can move `app.event_consumers.last_event_id` past a poison event.
 # PostgreSQL
 # (inside the compose network use sslmode=disable unless Postgres TLS is configured)
 DB_PASSWORD=<password>
-DATABASE_URL=postgres://app:<password>@postgres:5432/financeapp?sslmode=require
+DATABASE_URL=postgres://app:<password>@postgres:5432/financeapp?sslmode=disable
 
 # Hasura
 HASURA_GRAPHQL_ADMIN_SECRET=<secret>
