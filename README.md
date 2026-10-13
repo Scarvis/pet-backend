@@ -7,13 +7,15 @@ budgets, holdings and analytics, and runs a `LISTEN`-based event worker.
 
 ## Prerequisites
 
-- Go 1.23+ (module `github.com/Scarvis/pet-backend`)
-- Docker + Docker Compose plugin (for the full stack)
+- Go 1.26+ (`go.mod` directive `go 1.26.0`)
+- Docker Engine + Compose plugin (the full stack is compose-tested:
+  Hasura v2.45.0 + PostgreSQL 16 + backend)
 - `golang-migrate` CLI (only for `make migrate-*`; not vendored here)
-- A PostgreSQL 16 database and the real DDL from the sibling `db` repo
-  (`db_schema_0001/0002/0003.sql`, applied in order). There is **no live
-  database and no `migrations/` directory in this repo**, so DB-backed
-  handlers compile and `go vet` cleanly but cannot run here.
+- The real DDL from the sibling `db` repo
+  (`db_schema_0001..0004.sql`, applied in order; `0004` adds the
+  `app.via_action` guard trigger on `tx.transactions`). There is no
+  `migrations/` directory in this repo — `db_schema.sql` is the merged
+  baseline the compose Postgres seeds from on first init.
 
 ## Configuration (`.env`, never committed)
 
@@ -22,9 +24,10 @@ Copy this template to `.env` (gitignored). Values are per
 
 ```env
 # PostgreSQL
-# (inside the compose network use sslmode=disable unless Postgres TLS is configured)
+# (compose network has no TLS: use sslmode=disable here; sslmode=require
+# only against a TLS-configured / managed Postgres)
 DB_PASSWORD=<password>
-DATABASE_URL=postgres://app:<password>@postgres:5432/financeapp?sslmode=require
+DATABASE_URL=postgres://app:<password>@postgres:5432/financeapp?sslmode=disable
 
 # Hasura
 HASURA_GRAPHQL_ADMIN_SECRET=<secret>
@@ -36,7 +39,7 @@ HASURA_ACTION_SECRET=<secret>   # sent as X-Action-Secret; verified by the Go mi
 
 # Go service
 LISTEN_ADDR=:9090
-JWT_PRIVATE_KEY_PATH=/secrets/jwt_private.pem
+JWT_PRIVATE_KEY_PATH=/app/jwt_private.pem   # compose mounts ./jwt_private.pem here (read-only)
 JWT_ACCESS_TTL=15m
 JWT_REFRESH_TTL=720h
 
@@ -58,6 +61,11 @@ Notes:
 - `LISTEN_ADDR` defaults to `:9090`; the compose `backend` service only
   exposes (not publishes) port 9090 — Action handlers must be reachable
   only over the compose network (§11).
+- Two env profiles, never mixed in one `.env`: `.env.compose.example`
+  (compose: `postgres` host, `sslmode=disable`) vs a localhost profile for
+  bare-backend dev (`localhost`, `sslmode=disable`). The backend requires
+  `JWT_PRIVATE_KEY_PATH` at startup (config hard-fails without it); the key
+  itself is lazy-loaded on first auth request.
 
 ## Run / migrate / test
 
@@ -81,12 +89,15 @@ go build ./...; go vet ./...; gofmt -l cmd internal graphql; go test ./...
 
 Honest limitations of this checkout:
 
-- `make lint` does not work here (no golangci config installed).
-- `make migrate-*` does not work here (no `migrations/` dir yet, no live DB).
+- `make lint` does not work here (`make` itself is not installed in this
+  WSL distro, and there is no golangci config).
+- `make migrate-*` does not work here (no `migrations/` dir — DDL sources
+  live in the sibling `db` repo; no live DB reachable from the host since
+  compose publishes no Postgres port).
 - `go test -race` needs a cgo toolchain; plain `go test ./...` works
   without one.
 
-## HTTP routes (`cmd/server/main.go`, chi)
+## HTTP routes (`cmd/server/routes.go`, chi)
 
 Public (no action secret):
 
@@ -96,8 +107,11 @@ Public (no action secret):
   `financeapp_import_rows_total`, `financeapp_fx_fetch_*`,
   `financeapp_db_pool_in_use`).
 
-Protected (shared-secret middleware, §6.3): every route below also sets
-`SET LOCAL app.via_action = 'on'` and recovers panics into JSON errors.
+Protected (shared-secret middleware, §6.3): the middleware checks
+`X-Action-Secret` (401 on missing/invalid) and recovers panics into JSON
+errors. Mutating tx handlers additionally set
+`SET LOCAL app.via_action = 'on'` inside their own transaction so the
+`trg_tx_via_action` guard lets the write through.
 
 - Actions (§6.4): `/actions/auth/*` (register, login, refresh),
   `/actions/account/create`, `/actions/tx/*` (create, transfer, update,
@@ -115,6 +129,13 @@ Protected (shared-secret middleware, §6.3): every route below also sets
   (inputs, `Bigint` scalar, endpoints table). Point Hasura Actions at
   `HASURA_ACTION_BASE_URL` (`http://backend:9090` in compose) with the
   `X-Action-Secret` header from `HASURA_ACTION_SECRET`.
+- The applied §6 configuration is committed as code under
+  `hasura/metadata/` (tracked tables/views, `owner`/`admin`/`member`/`viewer`
+  permissions incl. Action permissions, 12 Actions, 5 event triggers,
+  5 cron triggers). Edit the SDL first, then re-apply — never hand-edit in
+  console and drift. Cron payloads are `{}`: the backend unwraps Hasura's
+  `{name, scheduled_time, payload}` envelope (`decodeInput` in
+  `cmd/server/main.go`).
 - Amounts cross the wire as the string-backed `Bigint` scalar; Hasura runs
   with `HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true` so `bigint`/`numeric`
   columns return as strings too (§6.7).
@@ -132,10 +153,12 @@ docker compose up --build
   No published port (add `127.0.0.1:5432:5432` locally for debugging).
 - `hasura/graphql-engine:v2.45.0` — on `http://localhost:8080`
   (admin secret from `.env`); waits for Postgres `service_healthy`.
-- `backend` — built from `Dockerfile` (multi-stage: `golang:1.23-alpine`
+- `backend` — built from `Dockerfile` (multi-stage: `golang:1.26-alpine`
   static build with `CGO_ENABLED=0`, minimal alpine runtime,
   `EXPOSE 9090`, `ENTRYPOINT /app/server`); starts after Postgres is
-  healthy; port 9090 exposed to the compose network only.
+  healthy and Hasura has started; port 9090 exposed to the compose network
+  only. Requires `JWT_PRIVATE_KEY_PATH` (compose mounts the gitignored
+  `./jwt_private.pem` at `/app/jwt_private.pem`, read-only).
 
 CI/CD shape (§9.4): `golangci-lint` → `go test -race -cover` →
 `docker build` → migrations on staging → integration tests
