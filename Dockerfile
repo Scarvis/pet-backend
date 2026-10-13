@@ -5,7 +5,7 @@
 # Stage 2 (runtime): minimal alpine image with CA certificates (needed for
 # outbound TLS: FX API, S3 storage); only the binary is copied over.
 
-FROM golang:1.23-alpine AS builder
+FROM golang:1.26-alpine AS builder
 
 WORKDIR /src
 
