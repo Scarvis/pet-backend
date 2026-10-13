@@ -7,27 +7,30 @@ backend (`cmd/server`, `graphql/actions.graphql`) per `ARCHITECTURE.md` §6, §9
 
 - `docker-compose.yml` defines `postgres` + `hasura` + `backend`. DB seed is
   resolved: `./db_schema.sql` (the path compose mounts) is a merged baseline
-  generated from `migrations/db_schema_0001..0003.sql`, in order — do not
-  edit it by hand, edit `migrations/` and re-merge. Source of truth for the
+  generated from the sibling `db` repo's `db_schema_0001..0004.sql`, in order
+  (`0004` adds the `app.via_action` guard trigger) — do not
+  edit it by hand, edit the sibling SQL files and re-merge. There is no
+  `migrations/` directory in this repo. Source of truth for the
   DDL remains the SQL files (trust SQL over prose on conflicts, see
   `AGENTS.md`). Fresh volume required for init scripts to run
   (`docker compose down -v` to re-init).
-- `.env` is local-dev only: `DATABASE_URL` points at
-    `localhost:5432/postgres`, Hasura vars are commented out. Compose needs
-    `DATABASE_URL=postgres://app:<pw>@postgres:5432/financeapp?sslmode=disable`
-    (no TLS inside the compose network; `sslmode=require` in committed
-    templates is wrong for stock `postgres:16-alpine`).
-- `graphql/actions.graphql` holds Action types/inputs (`Bigint` scalar, 13
-  mutations) but there is **no Hasura metadata/** directory and no CLI config
-  — all Hasura config currently lives only in prose (§6.2–§6.6).
-- Backend routes are fixed (`cmd/server/routes.go`): Actions `/actions/*`,
-  Events `/events/*`, Cron `/cron/*` on `:9090`, exposed (not published) in
-  compose; handlers verify `X-Action-Secret` and set
-  `SET LOCAL app.via_action='on'` per-tx.
+- `.env` holds the compose profile (`DATABASE_URL=postgres://app:<pw>@
+  postgres:5432/financeapp?sslmode=disable` — no TLS inside the compose
+  network); the localhost bare-backend profile is backed up at
+  `.env.local.bak`, and `.env.compose.example` is the filled template.
+  Never mix the two profiles in one `.env`.
+- `graphql/actions.graphql` holds Action types/inputs (`Bigint` scalar, **12**
+  mutations — the plan's earlier "13" was a miscount) and the applied §6
+  configuration is committed as code under **`hasura/metadata/`**.
+- Backend routes are fixed (`cmd/server/routes.go` + `main.go`/`types.go`):
+  Actions `/actions/*`, Events `/events/*`, Cron `/cron/*` on `:9090`,
+  exposed (not published) in compose; handlers verify `X-Action-Secret`;
+  mutating tx handlers set `SET LOCAL app.via_action='on'` per-tx (the
+  middleware only checks the secret and recovers panics).
 
 ## 1. Prerequisites (Ubuntu 26.04, bash)
 
-- Docker Engine + Compose plugin, Go 1.23+, Hasura CLI v2. Install:
+- Docker Engine + Compose plugin, Go 1.26+, Hasura CLI v2. Install:
   ```bash
   # Docker (official repo; $(lsb_release -cs) resolves the 26.04 suite —
   # if Docker has no suite for it yet, see Docker docs and pin nearest LTS)
@@ -42,7 +45,8 @@ backend (`cmd/server`, `graphql/actions.graphql`) per `ARCHITECTURE.md` §6, §9
     containerd.io docker-buildx-plugin docker-compose-plugin
   sudo usermod -aG docker "$USER"   # re-login afterwards
 
-  # Go (snap tracks latest stable; needs 1.23+ for the go 1.26.0 directive)
+  # Go (needs 1.26+ for the go 1.26.0 directive; this WSL distro has no
+  # `make` — use the `go`/`docker` commands directly)
   sudo snap install go --classic && go version
 
   # Hasura CLI v2
@@ -50,8 +54,10 @@ backend (`cmd/server`, `graphql/actions.graphql`) per `ARCHITECTURE.md` §6, §9
   hasura --version
   ```
 - JWT keypair: private PEM for Go (`JWT_PRIVATE_KEY_PATH`), public PEM for
-  Hasura `HASURA_GRAPHQL_JWT_SECRET`. Existing `jwt_private.pem` in repo root
-  is dev-only — regenerate for anything shared:
+  Hasura `HASURA_GRAPHQL_JWT_SECRET`. `jwt_private.pem` in repo root
+  is dev-only (gitignored) — regenerate for anything shared. `jwt_public.pem`
+  is derived from it; compose mounts the private PEM into the backend at
+  `/app/jwt_private.pem` (read-only, see `docker-compose.yml`):
   ```bash
   openssl genrsa -out jwt_private.pem 2048
   openssl rsa -in jwt_private.pem -pubout -out jwt_public.pem
@@ -63,7 +69,8 @@ backend (`cmd/server`, `graphql/actions.graphql`) per `ARCHITECTURE.md` §6, §9
 
 ## 2. Secrets / `.env` (never committed)
 
-Fill the commented Hasura block in `.env` (values per §9.1):
+Fill `.env` from the `.env.compose.example` template (values per §9.1;
+single `HASURA_ACTION_SECRET` shared by backend and Hasura):
 
 ```env
 DB_PASSWORD=<strong-pw>
@@ -81,19 +88,19 @@ Notes:
   `https://hasura.io/jwt/claims`. `HASURA_GRAPHQL_UNAUTHORIZED_ROLE=anonymous`,
   `HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES=true` (else `bigint` amounts lose
   precision; wire type is string-backed `Bigint`, §6.7).
-- Backend `HASURA_ACTION_SECRET=dev-secret` in current `.env` must match
-  Hasura's `value_from_env: HASURA_ACTION_SECRET` header on every
-  Action/Event/Cron webhook. Empty secret disables verification (local dev
+- The single `HASURA_ACTION_SECRET` in `.env` is shared: Hasura sends it as
+  `X-Action-Secret` (`value_from_env` in Action/Event/Cron metadata) and the
+  Go middleware verifies it. Empty secret disables verification (local dev
   only).
 - Keep two env profiles: local bare-backend (`localhost`, `sslmode=disable`)
   vs compose (`postgres` host). Do not mix them in one `.env`.
 
 ## 3. Database bring-up (before Hasura)
 
-1. Seed is in place (`./db_schema.sql`, merged from `migrations/`). If
-   `migrations/` changes, re-merge the three files in order and recreate the
-   Postgres volume — init scripts run only on first init
-   (`docker compose down -v` to re-init).
+1. Seed is in place (`./db_schema.sql`, merged from the sibling `db` repo's
+   `db_schema_0001..0004.sql`). If the sibling SQL changes, re-merge the
+   four files in order and recreate the Postgres volume — init scripts run
+   only on first init (`docker compose down -v` to re-init).
 2. `docker compose up postgres` and wait for `service_healthy`
    (`pg_isready -U app -d financeapp`). For local debugging add
    `127.0.0.1:5432:5432` port mapping (do not commit an open port).
@@ -110,14 +117,19 @@ docker compose up --build
 ```
 
 `hasura` waits for `postgres healthy`; `backend` builds from `Dockerfile`
-(static `CGO_ENABLED=0` build). Check `GET /healthz` from inside the network
+(static `CGO_ENABLED=0` build, `golang:1.26-alpine` builder to match the
+`go 1.26.0` directive). The backend requires `JWT_PRIVATE_KEY_PATH` at
+startup — compose mounts `./jwt_private.pem` at `/app/jwt_private.pem`
+(read-only). Check `GET /healthz` from inside the network
 (`docker compose exec backend wget -qO- http://localhost:9090/healthz`).
 
-Hasura CLI workflow (do once, then commit the output):
+Hasura CLI workflow (done — output committed under `hasura/`):
 
 ```bash
-hasura init hasura --endpoint http://localhost:8080 --admin-secret <secret>
-cd hasura && hasura console   # all clicks below land in hasura/metadata/
+# metadata was applied via the Metadata API and exported with
+# `hasura metadata export` (config.yaml points handler_webhook_baseurl at
+# http://backend:9090). hasura/migrations/ stays empty: no console DDL
+# changes happened — DB DDL comes from the db_schema.sql init script.
 ```
 
 ## 5. Configure Hasura (console → metadata as code)
@@ -141,7 +153,8 @@ Do in this order; export metadata after each block.
    `app.via_action` trigger as defense-in-depth, not as the permission model.
 4. **Custom types:** add `scalar Bigint` + all inputs/enums/outputs from
    `graphql/actions.graphql` (§6.7) into Hasura custom types.
-5. **Actions (§6.4, 13 total):** one per `type Mutation` field; handler URL =
+5. **Actions (§6.4, 12 total — verified against SDL + routes):** one per
+   `type Mutation` field; handler URL =
    `HASURA_ACTION_BASE_URL` + path in `routes.go`
    (`/actions/auth/register|login|refresh`, `/actions/account/create`,
    `/actions/tx/create|transfer|update|delete`, `/actions/invest/trade`,
@@ -149,49 +162,62 @@ Do in this order; export metadata after each block.
    Forward `X-Action-Secret` from env, forward session vars
    (`X-Hasura-User-Id`, `X-Hasura-Org-Id`). Derive Action from
    `graphql/actions.graphql` (do not hand-edit SDL in console and drift).
+   Actions are role-gated: add Action permissions (`anonymous` =
+   register/login/refreshToken; `owner`+`admin` = all; `member` = tx
+   mutations) or non-admin roles won't see them.
+   v2.45 API quirks: object relationships need the plain column-string form,
+   explicit `filter: {}`, `create_action` nests arguments/output_type in
+   `definition`, `forward_client_headers` is a Bool.
 6. **Events (§6.5):** 5 webhooks → backend `/events/*`
    (`transaction_inserted/updated`, `trade_inserted`, `import_job_updated`,
    `fx_rate_inserted`). Headers: `X-Action-Secret`. Retry + dead-letter config;
    note Go treats these as catch-up triggers draining `app.events` (§8.8),
    so at-least-once is expected.
-7. **Cron (§6.6):** 5 triggers with payloads matching `routes.go` cron inputs:
+7. **Cron (§6.6):** 5 triggers, payload `{}` (the backend unwraps Hasura's
+   `{name, scheduled_time, payload}` envelope in `decodeInput`):
    `fetch_fx_rates (0 6 * * *)`, `rebuild_daily_summary (30 0 * * *)`,
    `snapshot_net_worth (0 1 * * *)`, `rotate_budget_progress (0 0 * * 1,
    Monday)`, `cleanup_tokens (0 3 * * 0)`. Same secret header.
 8. Commit `hasura/metadata/` + `hasura/migrations/` to git; future
    environments run `hasura metadata apply && hasura migrate apply`.
 
-## 6. Verify
+## 6. Verify — done 2026-10-13, all green
 
 - Console GraphiQL as a JWT user: `ActiveAccounts`, `Transactions`,
-  `Balance` subscription examples (§6.7); confirm `balance_minor` arrives as
+  `Balance` subscription (live data frame) — `balance_minor` arrives as
   string.
-- Actions end-to-end: `register` → use access token → `createAccount` →
-  `createTransaction` → check `balance_minor` + `balance_ledger` row. Direct
-  `UPDATE tx.transactions SET amount_minor` via GraphQL must fail (guard
-  trigger without `app.via_action`).
-- Negative: wrong/missing `X-Action-Secret` → 401/403 from backend
+- Actions end-to-end: `register` (900s) → `createAccount` (bal `0`) →
+  `createTransaction` (`-1250`, ledger leg `delta_minor -1250`,
+  `ref_id` = tx id) → `update`/`delete` round-trips. Direct
+  `UPDATE tx.transactions SET amount_minor`: GraphQL validation fails (field
+  not in `set_input`); SQL without `app.via_action` hits guard `50001`.
+- Negative: wrong/missing `X-Action-Secret` → `401` from backend
   (`internal/common/middleware.go`).
-- Events: insert tx, confirm `app.events` row + worker catch-up
-  (`analytics.processed_events`, `financeapp_events_*` metrics on
-  `GET /metrics`).
-- Cron: manually trigger each once from console; check `fx.rates`,
-  `daily_category_summary`, `net_worth_snapshots`, token cleanup.
+- Events: tx lifecycle produces `app.events` rows; `processed_events` ==
+  `app.events`, worker at tip; `financeapp_events_*` on `GET /metrics`
+  (lag `0`).
+- Cron: all 5 triggered manually — rebuild/snapshot `{ok:true}`,
+  rotate/cleanup `{deleted:0}`, FX fetch fails only on missing `FX_API_KEY`
+  (environmental). Daily summary needs a categorized tx (rebuild skips
+  `category_id IS NULL` per §8.7).
 
-## 7. Open items / decisions
+## 7. Open items / decisions — disposition 2026-10-13
 
-- `sslmode=require` in README/ARCHITECTURE templates breaks stock compose
-  Postgres (no TLS) — use `disable` inside the network, `require` only with
-  TLS configured.
+- `sslmode=require` in README/ARCHITECTURE templates: README now annotates
+  it (`disable` inside the compose network, `require` only with TLS) and the
+  template URL uses `disable`. Closed.
 - `BIGINT` range note (§1, App. A): unchanged by this plan; amounts stay
-  string-`Bigint` on the wire regardless.
-- `make lint` does not work in this checkout (no golangci config) —
-  Hasura migrations live under `hasura/migrations/` once §4 CLI step is done.
-  DB migrations live in `migrations/` (`make migrate-*` needs a live
-  `DATABASE_URL`).
+  string-`Bigint` on the wire (proven in §6). The `NUMERIC(38,0)`-vs-cap
+  decision stays open — it's a schema migration, not Hasura config.
+- `make lint` does not work in this checkout (`make` itself is missing in
+  this WSL distro, plus no golangci config). `hasura/migrations/` stays
+  empty by design (no console DDL; DB DDL comes from `db_schema.sql`).
+  DB sources live in the sibling `db` repo, not `migrations/`
+  (`make migrate-*` additionally can't reach the compose DB — no published
+  port).
 
 ## Definition of done
 
 `docker compose up --build` green → console on `:8080` → all §6.2 objects
-tracked with §6.3 permissions → 13 Actions + 5 Events + 5 Crons green against
+tracked with §6.3 permissions → 12 Actions + 5 Events + 5 Crons green against
 backend `:9090` → metadata committed → §6.7 smoke queries pass.
