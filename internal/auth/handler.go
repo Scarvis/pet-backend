@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -63,6 +64,14 @@ func (h *Handler) newClaims(userID, orgID string, ttl time.Duration) AuthClaims 
 	return AuthClaims{Subject: userID, OrgID: orgID, Roles: []string{"owner"}, TTL: ttl}
 }
 
+// hashRefreshToken hashes a refresh token with SHA-256 for storage and lookup.
+// Unlike Hash (bcrypt, salted per password), this is deterministic so the
+// refresh_tokens row can be found by token_hash (§8.1).
+func hashRefreshToken(token string) string {
+	sum := sha256.Sum256([]byte(token))
+	return hex.EncodeToString(sum[:])
+}
+
 // randomToken returns a cryptographically random 256-bit refresh-token value.
 func randomToken() (string, error) {
 	b := make([]byte, 32)
@@ -78,7 +87,7 @@ func (h *Handler) Register(ctx context.Context, email, password string) (*IssueR
 	var orgID, userID uuid.UUID
 
 	err := db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
-		if _, err := tx.Exec(ctx, `INSERT INTO identity.organizations (plan, base_currency) VALUES ('free', $1) RETURNING id`, defaultBaseCurrency); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO identity.organizations (name, plan, base_currency) VALUES ($1, 'free', $2) RETURNING id`, email, defaultBaseCurrency).Scan(&orgID); err != nil {
 			return common.Wrap(err)
 		}
 
@@ -86,12 +95,12 @@ func (h *Handler) Register(ctx context.Context, email, password string) (*IssueR
 		if err != nil {
 			return common.Wrap(err)
 		}
-		if _, err := tx.Exec(ctx, `INSERT INTO identity.users (email, password_hash, status) VALUES ($1, $2, 'active') RETURNING id`, email, hash); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO identity.users (org_id, email, password_hash) VALUES ($1, $2, $3) RETURNING id`, orgID, email, hash).Scan(&userID); err != nil {
 			return common.Wrap(err)
 		}
 
-		var roleID uuid.UUID
-		if err := tx.QueryRow(ctx, `SELECT id FROM identity.roles WHERE name = 'owner' LIMIT 1`).Scan(&roleID); err != nil {
+		var roleID int16
+		if err := tx.QueryRow(ctx, `SELECT id FROM identity.roles WHERE code = 'owner' LIMIT 1`).Scan(&roleID); err != nil {
 			return common.Wrap(err)
 		}
 		if _, err := tx.Exec(ctx, `INSERT INTO identity.user_roles (user_id, role_id) VALUES ($1, $2)`, userID, roleID); err != nil {
@@ -111,10 +120,7 @@ func (h *Handler) Register(ctx context.Context, email, password string) (*IssueR
 	if err != nil {
 		return nil, err
 	}
-	refreshHash, err := Hash(refreshToken)
-	if err != nil {
-		return nil, err
-	}
+	refreshHash := hashRefreshToken(refreshToken)
 	if _, err := h.pool.Exec(ctx, `INSERT INTO identity.refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 days')`, userID, refreshHash); err != nil {
 		return nil, common.Wrap(err)
 	}
@@ -123,7 +129,7 @@ func (h *Handler) Register(ctx context.Context, email, password string) (*IssueR
 	if err != nil {
 		return nil, common.Wrap(err)
 	}
-	claims := h.newClaims(userID.String(), orgID.String(), h.cfg.JWTRefreshTTL)
+	claims := h.newClaims(userID.String(), orgID.String(), h.cfg.JWTAccessTTL)
 	accessToken, err := claims.Issue(priv)
 	if err != nil {
 		return nil, common.Wrap(err)
@@ -133,9 +139,9 @@ func (h *Handler) Register(ctx context.Context, email, password string) (*IssueR
 
 // Login verifies the password and issues a fresh access + refresh token pair (§8.1).
 func (h *Handler) Login(ctx context.Context, email, password string) (*IssueResult, error) {
-	var hash, orgID string
-	var userID uuid.UUID
-	err := h.pool.QueryRow(ctx, `SELECT password_hash, organization_id, id FROM identity.users WHERE email = $1 AND status = 'active'`, email).Scan(&hash, &orgID, &userID)
+	var hash string
+	var orgID, userID uuid.UUID
+	err := h.pool.QueryRow(ctx, `SELECT password_hash, org_id, id FROM identity.users WHERE email = $1 AND status = 'active'`, email).Scan(&hash, &orgID, &userID)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, common.NotFound("invalid credentials")
 	}
@@ -151,10 +157,7 @@ func (h *Handler) Login(ctx context.Context, email, password string) (*IssueResu
 	if err != nil {
 		return nil, err
 	}
-	refreshHash, err := Hash(refreshToken)
-	if err != nil {
-		return nil, err
-	}
+	refreshHash := hashRefreshToken(refreshToken)
 	if _, err := h.pool.Exec(ctx, `INSERT INTO identity.refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 days')`, userID, refreshHash); err != nil {
 		return nil, common.Wrap(err)
 	}
@@ -163,7 +166,7 @@ func (h *Handler) Login(ctx context.Context, email, password string) (*IssueResu
 	if err != nil {
 		return nil, common.Wrap(err)
 	}
-	claims := h.newClaims(userID.String(), orgID, h.cfg.JWTAccessTTL)
+	claims := h.newClaims(userID.String(), orgID.String(), h.cfg.JWTAccessTTL)
 	accessToken, err := claims.Issue(priv)
 	if err != nil {
 		return nil, common.Wrap(err)
@@ -175,14 +178,11 @@ func (h *Handler) Login(ctx context.Context, email, password string) (*IssueResu
 // old token is revoked inside the transaction; the new tokens are issued after it
 // commits (§8.1 refreshToken).
 func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*IssueResult, error) {
-	refreshHash, err := Hash(refreshToken)
-	if err != nil {
-		return nil, common.Wrap(err)
-	}
+	refreshHash := hashRefreshToken(refreshToken)
 
 	var userID uuid.UUID
 	var expiresAt time.Time
-	err = db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
+	err := db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
 		err := tx.QueryRow(ctx, `SELECT user_id, expires_at FROM identity.refresh_tokens WHERE token_hash = $1 AND revoked_at IS NULL`, refreshHash).Scan(&userID, &expiresAt)
 		if errors.Is(err, pgx.ErrNoRows) {
 			return common.Wrap(common.NotFound("invalid refresh token"))
@@ -202,8 +202,8 @@ func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*Issue
 		return nil, err
 	}
 
-	var orgID string
-	if err := h.pool.QueryRow(ctx, `SELECT organization_id FROM identity.users WHERE id = $1 LIMIT 1`, userID).Scan(&orgID); err != nil {
+	var orgID uuid.UUID
+	if err := h.pool.QueryRow(ctx, `SELECT org_id FROM identity.users WHERE id = $1 LIMIT 1`, userID).Scan(&orgID); err != nil {
 		return nil, common.Wrap(err)
 	}
 
@@ -211,7 +211,7 @@ func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*Issue
 	if err != nil {
 		return nil, common.Wrap(err)
 	}
-	claims := h.newClaims(userID.String(), orgID, h.cfg.JWTAccessTTL)
+	claims := h.newClaims(userID.String(), orgID.String(), h.cfg.JWTAccessTTL)
 	accessToken, err := claims.Issue(priv)
 	if err != nil {
 		return nil, common.Wrap(err)
@@ -221,10 +221,7 @@ func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*Issue
 	if err != nil {
 		return nil, err
 	}
-	newHash, err := Hash(newRefresh)
-	if err != nil {
-		return nil, err
-	}
+	newHash := hashRefreshToken(newRefresh)
 	if _, err := h.pool.Exec(ctx, `INSERT INTO identity.refresh_tokens (user_id, token_hash, expires_at) VALUES ($1, $2, now() + interval '30 days')`, userID, newHash); err != nil {
 		return nil, common.Wrap(err)
 	}

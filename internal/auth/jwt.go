@@ -71,6 +71,9 @@ func loadPrivateKey(path string) (*rsa.PrivateKey, error) {
 // iat/exp (§8.1). Roles must be non-empty; the first becomes the default role.
 func (c AuthClaims) claimsMap() map[string]any {
 	now := c.IssuedAt
+	if now.IsZero() {
+		now = time.Now()
+	}
 	return map[string]any{
 		"sub": c.Subject,
 		hasuraClaimsKey: map[string]any{
