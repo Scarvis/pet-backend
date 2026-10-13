@@ -43,7 +43,9 @@ var MinorUnits = map[string]int{
 	"JPY": 0, "BTC": 8, "ETH": 18,
 }
 
-func minorUnit(code string) int {
+// MinorUnit returns the decimal minor_unit for a currency code (ISO 4217 default of
+// 2). Production code should prefer reading it from fx.currencies.minor_unit at runtime.
+func MinorUnit(code string) int {
 	if u, ok := MinorUnits[code]; ok {
 		return u
 	}
