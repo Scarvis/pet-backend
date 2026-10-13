@@ -69,9 +69,9 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 9 — Deployment & docs
 
-- [ ] `Dockerfile`: multi-stage Go build → static binary. §9.2
-- [ ] `docker-compose.yml`: postgres + hasura + backend services, health checks, secrets via env, action secret shared between Hasura/Go. §9.2
-- [ ] Update README with run/migrate/test instructions and the `.env` template from §9.1.
+- [x] `Dockerfile`: multi-stage Go build → static binary. §9.2
+- [x] `docker-compose.yml`: postgres + hasura + backend services, health checks, secrets via env, action secret shared between Hasura/Go. §9.2
+- [x] Update README with run/migrate/test instructions and the `.env` template from §9.1.
 
 ---
 

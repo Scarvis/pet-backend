@@ -1,0 +1,55 @@
+# FinanceApp stack (ARCHITECTURE.md §9.2).
+#
+# Values come from a `.env` file that is NOT committed (see README.md and
+# §9.1). No top-level `version:` key (obsolete; Compose warns about it).
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: financeapp
+      POSTGRES_USER: app
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    # No published port: only hasura and backend reach Postgres over the
+    # compose network. For local debugging use "127.0.0.1:5432:5432".
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U app -d financeapp"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  hasura:
+    image: hasura/graphql-engine:v2.45.0
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      HASURA_GRAPHQL_DATABASE_URL: ${DATABASE_URL}
+      HASURA_GRAPHQL_ADMIN_SECRET: ${HASURA_GRAPHQL_ADMIN_SECRET}
+      HASURA_GRAPHQL_JWT_SECRET: ${HASURA_GRAPHQL_JWT_SECRET}
+      HASURA_GRAPHQL_UNAUTHORIZED_ROLE: anonymous
+      HASURA_GRAPHQL_STRINGIFY_NUMERIC_TYPES: "true"
+      HASURA_ACTION_BASE_URL: http://backend:9090
+      HASURA_ACTION_SECRET: ${HASURA_ACTION_SECRET}
+    ports: ["8080:8080"]
+
+  backend:
+    build: .
+    depends_on:
+      postgres:
+        condition: service_healthy
+      hasura:
+        condition: service_started
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      LISTEN_ADDR: ":9090"
+      HASURA_ACTION_SECRET: ${HASURA_ACTION_SECRET}
+    # Not published: the Action handlers trust the session variables Hasura
+    # forwards, so they must be reachable only over the compose network.
+    expose: ["9090"]
+
+volumes:
+  pgdata:
