@@ -1123,4 +1123,68 @@ COMMIT;
 --   ротация/архивация журнала событий (п. 8 чек-листа) не ломала
 --   таблицу обработанных событий.
 -- =====================================================================
+-- >>> BEGIN db_schema_0004.sql >>>
+-- =====================================================================
+-- db_schema_guard.sql — migration 0004
+-- PostgreSQL 16+
+-- =====================================================================
+-- Что делает эта миграция:
+--
+--   1. Добавляет BEFORE UPDATE триггер `trg_tx_via_action` на
+--      tx.transactions (ARCHITECTURE.md §6.3, «Defense in depth»).
+--      Триггер отклоняет изменения балансно-значимых колонок
+--      (amount_minor, currency, account_id, to_account_id, kind,
+--      deleted_at), если сессионная переменная `app.via_action`
+--      не равна 'on'. Go всегда выставляет её через
+--      `SET LOCAL app.via_action = 'on'` в своей транзакции
+--      (internal/transactions/handler.go); запросы Hasura — никогда.
+--
+--   2. Обновления, не затрагивающие эти колонки (например, правки
+--      category_id/description ролью member напрямую через Hasura),
+--      пропускаются без флага.
+--
+-- Ручной ремонт (вне Go): выполнить внутри транзакции
+--   BEGIN; SET LOCAL app.via_action = 'on'; UPDATE ...; COMMIT;
+-- =====================================================================
+
+BEGIN;
+
+CREATE OR REPLACE FUNCTION app.guard_tx_via_action()
+RETURNS trigger
+LANGUAGE plpgsql
+AS $$
+BEGIN
+    -- Untouched balance-relevant columns: allow (e.g. member edits of
+    -- category_id/description straight through Hasura, §6.3).
+    IF OLD.amount_minor      IS NOT DISTINCT FROM NEW.amount_minor
+       AND OLD.currency      IS NOT DISTINCT FROM NEW.currency
+       AND OLD.account_id    IS NOT DISTINCT FROM NEW.account_id
+       AND OLD.to_account_id IS NOT DISTINCT FROM NEW.to_account_id
+       AND OLD.kind          IS NOT DISTINCT FROM NEW.kind
+       AND OLD.deleted_at    IS NOT DISTINCT FROM NEW.deleted_at
+    THEN
+        RETURN NEW;
+    END IF;
+
+    -- Balance-relevant change: only the Go backend may do this, and it
+    -- always sets app.via_action via SET LOCAL in its own transaction.
+    -- current_setting(..., true) returns NULL (not an error) when unset.
+    IF current_setting('app.via_action', true) IS DISTINCT FROM 'on' THEN
+        RAISE EXCEPTION
+            'tx.transactions: change to balance-relevant columns requires app.via_action (use the Go Action handlers)';
+    END IF;
+
+    RETURN NEW;
+END;
+$$;
+
+DROP TRIGGER IF EXISTS trg_tx_via_action ON tx.transactions;
+
+CREATE TRIGGER trg_tx_via_action
+    BEFORE UPDATE ON tx.transactions
+    FOR EACH ROW
+    EXECUTE FUNCTION app.guard_tx_via_action();
+
+COMMIT;
+
 -- <<< END merged baseline <<<
