@@ -48,10 +48,10 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 
 ## Phase 5 — Budgets & analytics (event-driven recalculation)
 
-- [ ] `internal/budgets/handler.go`: budget CRUD handlers. §7.1
-- [ ] `internal/budgets/progress.go`: `budget_progress` upsert on transaction events; recursive category tree; alert publishing. §8.4
-- [ ] `internal/analytics/daily_summary.go`: rebuild `daily_category_summary` (exclude transfers, delete-then-insert). §8.7
-- [ ] `internal/analytics/net_worth.go`: snapshot net worth in base currency at latest rates. §8.7
+- [x] `internal/budgets/handler.go`: budget CRUD handlers. §7.1
+- [x] `internal/budgets/progress.go`: `budget_progress` upsert on transaction events; recursive category tree; alert publishing. §8.4
+- [x] `internal/analytics/daily_summary.go`: rebuild `daily_category_summary` (exclude transfers, delete-then-insert). §8.7
+- [x] `internal/analytics/net_worth.go`: snapshot net worth in base currency at latest rates. §8.7
 
 ## Phase 6 — Invest & imports (async workers)
 
