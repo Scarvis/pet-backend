@@ -126,8 +126,15 @@ func (d *Dispatcher) processBatch(ctx context.Context) (bool, error) {
 		return false, common.Wrap(err)
 	}
 
-	rows, err := d.pool.Query(ctx, `SELECT id, uid, event_type, payload FROM app.events WHERE id > GREATEST($1 - $2, 0) ORDER BY id LIMIT $3`,
-		cursor, trailingWindow, batchLimit)
+	// The trailing window (§5.4) is computed in Go: arithmetic on two
+	// untyped query parameters ($1 - $2) leaves Postgres unable to pick an
+	// operator (SQLSTATE 42725), so only a single bound value reaches SQL.
+	since := cursor - trailingWindow
+	if since < 0 {
+		since = 0
+	}
+	rows, err := d.pool.Query(ctx, `SELECT id, uid, event_type, payload FROM app.events WHERE id > $1 ORDER BY id LIMIT $2`,
+		since, batchLimit)
 	if err != nil {
 		return false, common.Wrap(err)
 	}
