@@ -1,0 +1,65 @@
+# pet-backend — Go vs Hasura routing (llms.txt)
+
+## Stack
+
+Go business-logic service + Hasura GraphQL engine + PostgreSQL (single source of
+truth). Money is integer minor units end-to-end (`common.Bigint` travels as a JSON
+string; Hasura runs with `STRINGIFY_NUMERIC_TYPES=true`). FX math via
+`common.ConvertToMinor` with each currency's `minor_unit` — never floats.
+
+## Golden rule
+
+- **Go Action** when money moves or a derived table must change atomically
+  (`balance_ledger`, `holdings`, `budget_progress`, `daily_category_summary`).
+- **Hasura GraphQL** for plain CRUD on simple entities and all reads/subscriptions.
+
+## Route table
+
+| Operation | Via | Endpoint / object |
+|---|---|---|
+| Register / login / refresh | Go | `POST /actions/auth/register`, `/login`, `/refresh` |
+| Create account | Go | `POST /actions/account/create` |
+| List/get/archive accounts | Hasura | `account.accounts`, `v_active_accounts` |
+| Create/update/delete transaction, transfer | Go | `POST /actions/tx/create`, `/transfer`, `/update`, `/delete` |
+| Reclassify transaction (category/description only) | Hasura | `tx.transactions` update `category_id`, `description` |
+| Categories, tags | Hasura | full CRUD |
+| Budgets, budget limits | Hasura | full CRUD; `budget_progress` is read-only (event worker writes it) |
+| Create trade | Go | `POST /actions/invest/trade` |
+| Portfolios, assets, holdings, trades, prices | Hasura | portfolios/assets CRUD, rest read-only |
+| Start import | Go | `POST /actions/import/start` |
+| Import jobs / raw rows | Hasura | jobs read, `raw_rows` read-only |
+| Fetch FX rates, rebuild analytics | Go | `POST /actions/fx/fetch`, `/actions/analytics/rebuild` |
+| Rates, summaries, snapshots | Hasura | read-only |
+
+## Constraints agents must obey
+
+1. Never write `balance_minor`, `balance_ledger`, `holdings`, `budget_progress`,
+   `price_history`, or `refresh_tokens` directly — Go or the event worker owns them.
+2. Never set `amount_minor`, `account_id`, `to_account_id`, `kind`, or `deleted_at`
+   on `tx.transactions` via Hasura: the `app.via_action` guard trigger rejects it.
+   Use the tx Actions.
+3. Transfers require `to_account_id`, `category_id = NULL`, distinct accounts.
+   `kind = transfer` rows are immutable (no update endpoint).
+4. Every mutating Go handler runs in `db.WithSerializable` (retries `40001`/`40P01`);
+   closures contain only DB work — side effects (JWT issue, notifications, HTTP)
+   go after `COMMIT`.
+5. Balance reversals sum `account.balance_ledger` by `ref_id`; never recompute from
+   current FX rates. Lock multiple accounts in ascending id order.
+6. Validate currency with `common.ValidCurrency` before inserts; scope by org with
+   `common.ActingOrg`; cross-org access returns `NotFound`.
+7. Handlers follow the `Handler{pool, log}` + `NewHandler(pool, cfg, log)` shape;
+   errors via `common.Wrap`/`BadRequest`/`NotFound` + `WriteError`/`WriteJSON`.
+8. Amounts over the API are string-backed `Bigint` (`"12345"`); parse server-side
+   with `strconv.ParseInt` / `Bigint.Int64`.
+9. Cron/event endpoints (`/cron/*`, `/events/*`) are for Hasura and the LISTEN
+   worker — do not call them as CRUD.
+10. Docs: `ARCHITECTURE.md` §8 is the flow spec; per-package `internal/*/README.md`
+    is the entry-point reference; when prose conflicts with `../db/*.sql`, trust SQL.
+
+## Module map
+
+`auth` identity/JWT · `accounts` account shells · `transactions` money movement ·
+`budgets` limits + spend progress · `invest` portfolios/trades/valuation ·
+`imports` CSV/OFX parse-dedup-map · `fx` rate loading · `analytics` read models ·
+`events` LISTEN worker · `common` identity/currency/money/errors/middleware ·
+`config` env · `db` pool + serializable retry · `observability` Prometheus metrics.
