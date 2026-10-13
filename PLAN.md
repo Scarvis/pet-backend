@@ -33,8 +33,6 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 - [x] `internal/auth/handler.go`: `register`, `login`, `refreshToken` handlers (transaction flows in §8.1). §7.1, §6.4 — `Register` runs one SERIALIZABLE tx (`WithSerializable`) creating org + user + owner role + system categories, then issues JWT + stores refresh token; `Login` verifies password and rotates a new pair; `RefreshToken` revokes the old token inside a tx and issues fresh tokens after commit (side effects post-COMMIT per §8.0). Lazy-cached RSA signing key.
 - [x] Tests: `internal/auth/jwt_test.go` — bcrypt round-trip, JWT issue/verify round-trip + tamper/wrong-key rejection, PKCS#8 PEM load. All 4 pass; `go build ./...`, `go vet ./...`, gofmt clean on cmd/internal/graphql.
 
-> **Note:** handlers reference the documented schema (identity.organizations/users/roles/user_roles, tx.categories, identity.refresh_tokens). They compile and vet cleanly now but will only run once `db_schema.sql` / migration 0001 are filled in — an open item (see Phase 9). JWT uses stdlib RS256 rather than a third-party library.
-
 ## Phase 4 — Transactions & accounts (core)
 
 - [x] `internal/accounts/`: account CRUD + archiving (`deleted_at`). §7.1 ✅ `handler.go` implements Create/List/Get/Archive/Unarchive with soft-delete and org ownership checks via `common.ActingOrg`.
@@ -43,8 +41,6 @@ All business-logic details below are taken verbatim from `ARCHITECTURE.md`.
 - [x] `internal/transactions/transfer.go`: two-sided transfer with currency conversion + ledger rows. §8.3 ✅ single transfer row, source −amount / target +amount ledger entries, target-leg FX conversion, both accounts locked in ascending id order.
 - [x] Wire SERIALIZABLE retry (§Phase 1) around every mutating handler; lock accounts in ascending id order to avoid deadlocks. §8.0, §8.2 ✅ every mutating handler uses `WithSerializable`; `sort.Slice` on account ids before `FOR UPDATE`.
 - [x] Tests: `internal/common/money_test.go` (FX math, minor units, `Bigint` wire type), `internal/transactions/handler_test.go` (`validateKind`, `sameDay`). All pass; `go build ./...`, `go vet ./...`, gofmt clean.
-
-> **Note:** like Phase 3, the handlers compile and vet cleanly but need a live DB to run against — `db_schema.sql` / migration 0001 are still open (see Phase 9). Money stays in integer minor units end-to-end; currency codes validated against `fx.currencies`.
 
 ## Phase 5 — Budgets & analytics (event-driven recalculation)
 
