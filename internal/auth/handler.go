@@ -228,11 +228,38 @@ func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*Issue
 	return &IssueResult{AccessToken: accessToken, RefreshToken: newRefresh, ExpiresIn: claims.TTL}, nil
 }
 
-// insertSystemCategories seeds the income/expense root categories on registration.
+// insertSystemCategories seeds the income/expense root categories on registration
+// plus the standard Russian subcategory set (27 rows total, well under the
+// 100-per-org cap enforced by tx.enforce_category_limit). All rows are
+// is_system so clients can distinguish them from user categories.
 func insertSystemCategories(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
-	for _, c := range []struct{ name, kind string }{{"Income", "income"}, {"Expense", "expense"}} {
-		if _, err := tx.Exec(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, is_system) VALUES ($1, NULL, $2, $3, true)`, orgID, c.name, c.kind); err != nil {
-			return fmt.Errorf("insert system category %q: %w", c.name, err)
+	incomeChildren := []string{
+		"Зарплата", "Фриланс", "Бизнес", "Инвестиции", "Аренда", "Подарки", "Прочее",
+	}
+	expenseChildren := []string{
+		"Продукты", "Кафе и рестораны", "Транспорт", "Жильё",
+		"Коммунальные услуги", "Связь и интернет", "Здоровье",
+		"Одежда и обувь", "Образование", "Развлечения", "Спорт",
+		"Дети", "Питомцы", "Путешествия", "Красота", "Подписки",
+		"Налоги", "Прочее",
+	}
+	roots := []struct {
+		name     string
+		kind     string
+		children []string
+	}{
+		{"Доходы", "income", incomeChildren},
+		{"Расходы", "expense", expenseChildren},
+	}
+	for _, r := range roots {
+		var rootID uuid.UUID
+		if err := tx.QueryRow(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, is_system) VALUES ($1, NULL, $2, $3, true) RETURNING id`, orgID, r.name, r.kind).Scan(&rootID); err != nil {
+			return fmt.Errorf("insert system category %q: %w", r.name, err)
+		}
+		for _, child := range r.children {
+			if _, err := tx.Exec(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, is_system) VALUES ($1, $2, $3, $4, true)`, orgID, rootID, child, r.kind); err != nil {
+				return fmt.Errorf("insert system category %q: %w", child, err)
+			}
 		}
 	}
 	return nil

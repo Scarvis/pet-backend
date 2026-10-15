@@ -255,6 +255,7 @@ CREATE TABLE account.accounts (
     currency      CHAR(3) NOT NULL,
     balance_minor BIGINT NOT NULL DEFAULT 0,
     is_archived   BOOLEAN NOT NULL DEFAULT false,
+    is_hidden     BOOLEAN NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     updated_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
     deleted_at    TIMESTAMPTZ
@@ -274,10 +275,29 @@ CREATE TABLE tx.categories (
     kind       TEXT NOT NULL CHECK (kind IN ('income','expense')),
     icon       TEXT,
     is_system  BOOLEAN NOT NULL DEFAULT false,
+    is_hidden  BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, parent_id, name)
 );
 CREATE INDEX idx_categories_org ON tx.categories(org_id);
+
+-- Max 100 categories per organization (roots + children + user rows).
+-- New orgs are seeded with 27 Russian system categories by the backend
+-- (internal/auth insertSystemCategories); see migrations/000006.
+CREATE OR REPLACE FUNCTION tx.enforce_category_limit()
+RETURNS trigger AS $$
+BEGIN
+    IF (SELECT count(*) FROM tx.categories WHERE org_id = NEW.org_id) >= 100 THEN
+        RAISE EXCEPTION 'category limit (100 per organization) exceeded' USING ERRCODE = 'P0001';
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS trg_categories_limit ON tx.categories;
+CREATE TRIGGER trg_categories_limit
+    BEFORE INSERT ON tx.categories
+    FOR EACH ROW EXECUTE FUNCTION tx.enforce_category_limit();
 
 CREATE TABLE tx.transactions (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -611,7 +631,7 @@ WHERE t.deleted_at IS NULL;
 
 -- Активные счета с балансом
 CREATE VIEW account.v_active_accounts AS
-SELECT id, org_id, owner_user_id, name, type, currency, balance_minor
+SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_hidden
 FROM account.accounts
 WHERE deleted_at IS NULL AND is_archived = false;
 
@@ -624,7 +644,8 @@ INSERT INTO identity.roles(code) VALUES
     ('owner'), ('admin'), ('member'), ('viewer')
 ON CONFLICT DO NOTHING;
 
--- Основные валюты
+-- Основные валюты (minor_unit по ISO 4217 для фиата; BTC=8 satoshi, ETH=18 wei).
+-- ON CONFLICT DO UPDATE: правит minor_unit в уже засеянных БД, а не только в новых.
 INSERT INTO fx.currencies(code, name, minor_unit) VALUES
     ('USD','US Dollar',2),
     ('EUR','Euro',2),
@@ -637,7 +658,7 @@ INSERT INTO fx.currencies(code, name, minor_unit) VALUES
     ('UAH','Ukrainian Hryvnia',2),
     ('BTC','Bitcoin',8),
     ('ETH','Ethereum',18)
-ON CONFLICT DO NOTHING;
+ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, minor_unit = EXCLUDED.minor_unit;
 
 -- Системные категории создаются вместе с организацией.
 -- Пример вызова после регистрации пользователя:
@@ -1184,51 +1205,6 @@ CREATE TRIGGER trg_tx_via_action
     BEFORE UPDATE ON tx.transactions
     FOR EACH ROW
     EXECUTE FUNCTION app.guard_tx_via_action();
-
-COMMIT;
--- >>> BEGIN db_schema_0005.sql >>>
--- =====================================================================
--- db_schema_accounts_is_hidden.sql — migration 0005
--- PostgreSQL 16+
--- =====================================================================
--- Что делает эта миграция:
---
---   1. Добавляет колонку `is_hidden` в account.accounts — клиентский
---      флаг видимости счёта. Скрытые счета остаются активными,
---      сохраняют баланс и участвуют в нетто-стоимости; клиенты
---      отфильтровывают их из списков по умолчанию. Независим от
---      архивации (deleted_at).
---   2. Обновляет представление account.v_active_accounts: добавляет
---      is_hidden в список колонок (порядок существующих колонок
---      сохраняется, новая добавляется в конец).
---
--- Контракт:
---   - Go: internal/accounts/handler.go (Account.IsHidden, Create/List/Get);
---     Action-эндпоинт /actions/account/create (cmd/server/routes.go).
---   - GraphQL: graphql/actions.graphql (CreateAccountInput.is_hidden,
---     Account.is_hidden), hasura/metadata/actions.graphql.
---   - Hasura: права insert/update на account.accounts.
---   - Зеркальная backend-миграция: migrations/000005_account_is_hidden.up.sql.
--- =====================================================================
-
-BEGIN;
-
--- ---------------------------------------------------------------------
--- 1. Колонка видимости.
---    DEFAULT false — существующие счета остаются видимыми;
---    NOT NULL — фильтрация не требует проверки на NULL.
--- ---------------------------------------------------------------------
-ALTER TABLE account.accounts
-    ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
-
--- ---------------------------------------------------------------------
--- 2. Представление активных счетов: is_hidden добавляется в конец,
---    порядок существующих колонок не меняется.
--- ---------------------------------------------------------------------
-CREATE OR REPLACE VIEW account.v_active_accounts AS
-SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_hidden
-FROM account.accounts
-WHERE deleted_at IS NULL AND is_archived = false;
 
 COMMIT;
 
