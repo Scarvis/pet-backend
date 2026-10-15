@@ -26,6 +26,7 @@ insert_permissions:
         - type
         - currency
         - is_archived
+        - is_hidden
 select_permissions:
   - role: member
     permission:
@@ -53,6 +54,7 @@ update_permissions:
         - type
         - currency
         - is_archived
+        - is_hidden
         - deleted_at
       filter:
         org_id:

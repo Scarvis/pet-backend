@@ -65,6 +65,7 @@ type createAccountRequest struct {
 	Name     string `json:"name"`
 	Type     string `json:"type"`
 	Currency string `json:"currency"`
+	IsHidden bool   `json:"is_hidden"`
 }
 
 // accountResponse renders an account with its balance as a Bigint string.
@@ -76,6 +77,7 @@ type accountResponse struct {
 	Type         string        `json:"type"`
 	Currency     string        `json:"currency"`
 	BalanceMinor common.Bigint `json:"balance_minor"`
+	IsHidden     bool          `json:"is_hidden"`
 	CreatedAt    time.Time     `json:"created_at"`
 	UpdatedAt    time.Time     `json:"updated_at"`
 }
@@ -89,6 +91,7 @@ func toAccountResponse(a *accounts.Account) *accountResponse {
 		Type:         a.Type,
 		Currency:     a.Currency,
 		BalanceMinor: toBigint(a.BalanceMinor),
+		IsHidden:     a.IsHidden,
 		CreatedAt:    a.CreatedAt,
 		UpdatedAt:    a.UpdatedAt,
 	}

@@ -85,6 +85,7 @@ input CreateAccountInput {
   name: String!
   type: String!                   # cash | card | deposit | debt
   currency: String!
+  is_hidden: Boolean               # optional, defaults to false
 }
 
 input FetchFxRatesInput {
@@ -158,6 +159,7 @@ type AccountOutput {
   type: String!
   currency: String!
   balance_minor: Bigint!
+  is_hidden: Boolean!
   created_at: timestamptz!
   updated_at: timestamptz!
 }

@@ -8,7 +8,7 @@ CRUD-lite for `account.accounts`. Balance is never set directly — only via tra
 
 | Method | Route | Notes |
 |---|---|---|
-| `Create(ctx, name, typ, currency)` | `POST /actions/account/create` | Validates type + currency, `balance_minor` from DB default |
+| `Create(ctx, name, typ, currency, isHidden)` | `POST /actions/account/create` | Validates type + currency, `balance_minor` from DB default; `is_hidden` visibility flag (default false) |
 | `List(ctx)` / `Get(ctx, id)` | Hasura direct (no Action) | Org-scoped reads |
 | `Archive(ctx, id)` / `Unarchive(ctx, id)` | Hasura direct (no Action) | Soft delete via `deleted_at` |
 
@@ -21,6 +21,7 @@ CRUD-lite for `account.accounts`. Balance is never set directly — only via tra
 - Mutations run through `db.WithSerializable`.
 - `type ∈ {cash, card, deposit, debt}`; currency must exist in `fx.currencies` (`common.ValidCurrency`).
 - `Archive`/`Unarchive` are idempotent no-ops when already in the target state.
+- `is_hidden` is a client-side visibility flag, independent from archiving: hidden accounts stay active and count toward balances/net worth. Toggled directly via Hasura (`is_hidden` is in insert/update permissions).
 - Cross-org access returns `NotFound`, not forbidden.
 
 ## Errors

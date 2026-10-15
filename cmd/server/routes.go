@@ -46,7 +46,7 @@ func registerActionRoutes(r chi.Router, s *server) {
 	})
 	post(r, "createAccount", "/actions/account/create", func(w http.ResponseWriter, req *http.Request) {
 		handle(w, req, func(ctx context.Context, in createAccountRequest) (*accountResponse, error) {
-			acc, err := s.accounts.Create(ctx, in.Name, in.Type, in.Currency)
+			acc, err := s.accounts.Create(ctx, in.Name, in.Type, in.Currency, in.IsHidden)
 			if err != nil {
 				return nil, err
 			}

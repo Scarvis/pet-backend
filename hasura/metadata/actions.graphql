@@ -104,6 +104,7 @@ input CreateAccountInput {
   name: String!
   type: String!
   currency: String!
+  is_hidden: Boolean
 }
 
 input CreateTransactionInput {
@@ -214,6 +215,7 @@ type AccountOutput {
   type: String!
   currency: String!
   balance_minor: Bigint!
+  is_hidden: Boolean!
   created_at: timestamptz!
   updated_at: timestamptz!
 }
