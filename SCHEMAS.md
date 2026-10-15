@@ -47,7 +47,7 @@ Idempotency: consumers check `analytics.processed_events(event_id = uid)` before
 
 | Table                                                                                                                                                                | Key columns                                                                                                |
 | -------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| `accounts(id, org_id, owner_user_id → users, name, type cash/card/deposit/debt, currency → fx, balance_minor BIGINT DEFAULT 0, is_archived, timestamps, deleted_at)` | Event trigger `account/soft`. Indexes on `org_id`, `owner_user_id`.                                        |
+| `accounts(id, org_id, owner_user_id → users, name, type cash/card/deposit/debt, currency → fx, balance_minor BIGINT DEFAULT 0, is_archived, timestamps, deleted_at, is_hidden BOOLEAN NOT NULL DEFAULT false)` | Event trigger `account/soft`. Indexes on `org_id`, `owner_user_id`.                                        |
 | `balance_ledger(id BIGSERIAL, account_id → accounts CASCADE, delta_minor, reason transaction/adjustment/transfer, ref_id → tx.transactions SET NULL, created_at)`    | Append-only movement history behind `balance_minor`. Event trigger `balance_ledger/hard` on INSERT/DELETE. |
 
 View `account.v_active_accounts`: non-deleted, non-archived accounts with balance.

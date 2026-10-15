@@ -26,9 +26,9 @@ go build ./...; go vet ./...; gofmt -l cmd internal graphql; go test ./internal/
 
 ## Schema source of truth
 
-- The real DDL is the **sibling repo** `../db` (`db_schema_0001/0002/0003.sql`,
-  run in order), reached via `db.lnk` (gitignored). `SCHEMAS.md` (untracked)
-  is only a summary.
+- The real DDL is the **sibling repo** `../db` (`db_schema_0001/0002/0003.sql`
+  plus `db_schema_0005.sql`, run in numeric order), reached via `db.lnk`
+  (gitignored). `SCHEMAS.md` (untracked) is only a summary.
 - When prose (`ARCHITECTURE.md`/`SCHEMAS.md`/`PLAN.md`) conflicts with
   `../db/*.sql`, trust the SQL. Known cases: `budget_progress.period_end` is
   `NOT NULL` (custom periods use a `9999-12-31` sentinel, never NULL);

@@ -1186,5 +1186,50 @@ CREATE TRIGGER trg_tx_via_action
     EXECUTE FUNCTION app.guard_tx_via_action();
 
 COMMIT;
+-- >>> BEGIN db_schema_0005.sql >>>
+-- =====================================================================
+-- db_schema_accounts_is_hidden.sql — migration 0005
+-- PostgreSQL 16+
+-- =====================================================================
+-- Что делает эта миграция:
+--
+--   1. Добавляет колонку `is_hidden` в account.accounts — клиентский
+--      флаг видимости счёта. Скрытые счета остаются активными,
+--      сохраняют баланс и участвуют в нетто-стоимости; клиенты
+--      отфильтровывают их из списков по умолчанию. Независим от
+--      архивации (deleted_at).
+--   2. Обновляет представление account.v_active_accounts: добавляет
+--      is_hidden в список колонок (порядок существующих колонок
+--      сохраняется, новая добавляется в конец).
+--
+-- Контракт:
+--   - Go: internal/accounts/handler.go (Account.IsHidden, Create/List/Get);
+--     Action-эндпоинт /actions/account/create (cmd/server/routes.go).
+--   - GraphQL: graphql/actions.graphql (CreateAccountInput.is_hidden,
+--     Account.is_hidden), hasura/metadata/actions.graphql.
+--   - Hasura: права insert/update на account.accounts.
+--   - Зеркальная backend-миграция: migrations/000005_account_is_hidden.up.sql.
+-- =====================================================================
+
+BEGIN;
+
+-- ---------------------------------------------------------------------
+-- 1. Колонка видимости.
+--    DEFAULT false — существующие счета остаются видимыми;
+--    NOT NULL — фильтрация не требует проверки на NULL.
+-- ---------------------------------------------------------------------
+ALTER TABLE account.accounts
+    ADD COLUMN IF NOT EXISTS is_hidden BOOLEAN NOT NULL DEFAULT false;
+
+-- ---------------------------------------------------------------------
+-- 2. Представление активных счетов: is_hidden добавляется в конец,
+--    порядок существующих колонок не меняется.
+-- ---------------------------------------------------------------------
+CREATE OR REPLACE VIEW account.v_active_accounts AS
+SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_hidden
+FROM account.accounts
+WHERE deleted_at IS NULL AND is_archived = false;
+
+COMMIT;
 
 -- <<< END merged baseline <<<
