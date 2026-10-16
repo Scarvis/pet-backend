@@ -19,8 +19,17 @@ import (
 	"github.com/Scarvis/pet-backend/internal/db"
 )
 
-// accountTypes are the CHECK-constraint values for account.type (§3.2).
-var accountTypes = map[string]bool{"cash": true, "card": true, "deposit": true, "debt": true}
+// accountTypes are the allowed account.type values. They must match the
+// account.accounts_type catalog seeded by migration 000008; the DB foreign
+// key (fk_accounts_type) enforces the same set, this map only fails fast.
+var accountTypes = map[string]bool{
+	"debit card": true, "cash": true, "deposit": true, "broker": true,
+	"credit card": true, "credit": true, "debt": true, "crypto": true,
+	"saving": true,
+}
+
+// accountTypeList renders the allowed types for error messages.
+const accountTypeList = "debit card, cash, deposit, broker, credit card, credit, debt, crypto, saving"
 
 // Handler serves the account Actions (create/list/get/archive/unarchive). It owns
 // the db pool and logger; cmd/server wires it to HTTP endpoints (§7.1).
@@ -38,29 +47,35 @@ func NewHandler(pool *pgxpool.Pool, cfg *config.Config, log *slog.Logger) *Handl
 // accounts; it holds the soft-delete timestamp once archived. IsHidden is a
 // client-side visibility flag (hidden from default lists, still counted in
 // balances and net worth); it is independent from archiving (deleted_at).
+// InitialAmount is the opening balance in minor units, fixed at creation;
+// BalanceMinor moves with transactions while InitialAmount never changes.
 type Account struct {
-	ID           uuid.UUID  `json:"id"`
-	OrgID        uuid.UUID  `json:"org_id"`
-	OwnerUserID  uuid.UUID  `json:"owner_user_id"`
-	Name         string     `json:"name"`
-	Type         string     `json:"type"` // cash | card | deposit | debt
-	Currency     string     `json:"currency"`
-	BalanceMinor int64      `json:"balance_minor"`
-	IsArchived   bool       `json:"is_archived"`
-	IsHidden     bool       `json:"is_hidden"`
-	DeletedAt    *time.Time `json:"deleted_at,omitempty"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
+	ID            uuid.UUID  `json:"id"`
+	OrgID         uuid.UUID  `json:"org_id"`
+	OwnerUserID   uuid.UUID  `json:"owner_user_id"`
+	Name          string     `json:"name"`
+	Type          string     `json:"type"` // FK → account.accounts_type(code)
+	Currency      string     `json:"currency"`
+	BalanceMinor  int64      `json:"balance_minor"`
+	InitialAmount int64      `json:"initial_amount"`
+	IsArchived    bool       `json:"is_archived"`
+	IsHidden      bool       `json:"is_hidden"`
+	DeletedAt     *time.Time `json:"deleted_at,omitempty"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
-// Create inserts a new account owned by the acting user within their organization.
-func (h *Handler) Create(ctx context.Context, name, typ, currency string, isHidden bool) (*Account, error) {
+// Create inserts a new account owned by the acting user within their
+// organization. The account opens with balance_minor = initialAmount and an
+// opening balance_ledger row (reason='adjustment') when initialAmount != 0,
+// so the ledger sum stays consistent with the balance.
+func (h *Handler) Create(ctx context.Context, name, typ, currency string, initialAmount int64, isHidden bool) (*Account, error) {
 	userID, err := common.CurrentUser(ctx)
 	if err != nil {
 		return nil, err
 	}
 	if !accountTypes[typ] {
-		return nil, common.Wrap(common.BadRequest("account type must be one of cash, card, deposit, debt"))
+		return nil, common.Wrap(common.BadRequest("account type must be one of " + accountTypeList))
 	}
 	if !common.ValidCurrency(ctx, h.pool, currency) {
 		return nil, common.BadRequest(fmt.Sprintf("unknown currency %q", currency))
@@ -72,9 +87,17 @@ func (h *Handler) Create(ctx context.Context, name, typ, currency string, isHidd
 		if err != nil {
 			return err
 		}
-		row := tx.QueryRow(ctx, `INSERT INTO account.accounts (org_id, owner_user_id, name, type, currency, is_hidden) VALUES ($1, $2, $3, $4, $5, $6) RETURNING id, org_id, owner_user_id, name, type, currency, balance_minor, is_archived, is_hidden, deleted_at, created_at, updated_at`,
-			orgID, userID, name, typ, currency, isHidden)
-		return row.Scan(&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt)
+		row := tx.QueryRow(ctx, `INSERT INTO account.accounts (org_id, owner_user_id, name, type, currency, initial_amount, balance_minor, is_hidden) VALUES ($1, $2, $3, $4, $5, $6, $6, $7) RETURNING id, org_id, owner_user_id, name, type, currency, balance_minor, initial_amount, is_archived, is_hidden, deleted_at, created_at, updated_at`,
+			orgID, userID, name, typ, currency, initialAmount, isHidden)
+		if err := row.Scan(&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.InitialAmount, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt); err != nil {
+			return common.Wrap(err)
+		}
+		if initialAmount != 0 {
+			if _, err := tx.Exec(ctx, `INSERT INTO account.balance_ledger (account_id, delta_minor, reason) VALUES ($1, $2, 'adjustment')`, acc.ID, initialAmount); err != nil {
+				return common.Wrap(err)
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return nil, err
@@ -90,7 +113,7 @@ func (h *Handler) List(ctx context.Context) ([]Account, error) {
 		return nil, err
 	}
 
-	rows, err := h.pool.Query(ctx, `SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_archived, is_hidden, deleted_at, created_at, updated_at FROM account.accounts WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`, orgID)
+	rows, err := h.pool.Query(ctx, `SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, initial_amount, is_archived, is_hidden, deleted_at, created_at, updated_at FROM account.accounts WHERE org_id = $1 AND deleted_at IS NULL ORDER BY name ASC`, orgID)
 	if err != nil {
 		return nil, common.Wrap(err)
 	}
@@ -116,8 +139,8 @@ func (h *Handler) Get(ctx context.Context, id uuid.UUID) (*Account, error) {
 	}
 
 	var acc Account
-	err = h.pool.QueryRow(ctx, `SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_archived, is_hidden, deleted_at, created_at, updated_at FROM account.accounts WHERE id = $1 AND org_id = $2`, id, orgID).Scan(
-		&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt)
+	err = h.pool.QueryRow(ctx, `SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, initial_amount, is_archived, is_hidden, deleted_at, created_at, updated_at FROM account.accounts WHERE id = $1 AND org_id = $2`, id, orgID).Scan(
+		&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.InitialAmount, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, common.Wrap(common.NotFound("account not found"))
 	}
@@ -189,5 +212,5 @@ func (h *Handler) Unarchive(ctx context.Context, id uuid.UUID) error {
 // scanAccount fills acc from a pgx rows source. It is shared by List and Get so the
 // account shape stays consistent; NULL deleted_at scans into a nil *time.Time.
 func scanAccount(ctx context.Context, src pgx.Rows, acc *Account) error {
-	return src.Scan(&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt)
+	return src.Scan(&acc.ID, &acc.OrgID, &acc.OwnerUserID, &acc.Name, &acc.Type, &acc.Currency, &acc.BalanceMinor, &acc.InitialAmount, &acc.IsArchived, &acc.IsHidden, &acc.DeletedAt, &acc.CreatedAt, &acc.UpdatedAt)
 }

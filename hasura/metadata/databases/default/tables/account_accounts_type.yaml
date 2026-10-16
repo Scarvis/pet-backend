@@ -1,0 +1,16 @@
+table:
+  name: accounts_type
+  schema: account
+select_permissions:
+  - role: member
+    permission:
+      columns: '*'
+      filter: {}
+  - role: owner
+    permission:
+      columns: '*'
+      filter: {}
+  - role: viewer
+    permission:
+      columns: '*'
+      filter: {}

@@ -228,11 +228,69 @@ func (h *Handler) RefreshToken(ctx context.Context, refreshToken string) (*Issue
 	return &IssueResult{AccessToken: accessToken, RefreshToken: newRefresh, ExpiresIn: claims.TTL}, nil
 }
 
-// insertSystemCategories seeds the income/expense root categories on registration
-// plus the standard Russian subcategory set (27 rows total, well under the
-// 100-per-org cap enforced by tx.enforce_category_limit). All rows are
-// is_system so clients can distinguish them from user categories.
+// insertSystemCategories seeds a new organization's category tree by copying
+// the global tx.system_categories template (migration 000009): roots first,
+// then children remapped onto the freshly inserted org roots. When the
+// template table is empty (e.g. migration 000009 not applied yet), it falls
+// back to the built-in Russian default set (27 rows total, well under the
+// 100-per-org cap enforced by tx.enforce_category_limit).
 func insertSystemCategories(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
+	type sysCat struct {
+		id       uuid.UUID
+		parentID *uuid.UUID
+		name     string
+		kind     string
+		icon     *string
+	}
+	rows, err := tx.Query(ctx, `SELECT id, parent_id, name, kind, icon FROM tx.system_categories ORDER BY parent_id NULLS FIRST, name`)
+	if err != nil {
+		return fmt.Errorf("read system categories: %w", err)
+	}
+	var template []sysCat
+	for rows.Next() {
+		var c sysCat
+		if err := rows.Scan(&c.id, &c.parentID, &c.name, &c.kind, &c.icon); err != nil {
+			rows.Close()
+			return fmt.Errorf("scan system category: %w", err)
+		}
+		template = append(template, c)
+	}
+	rows.Close()
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("read system categories: %w", err)
+	}
+
+	if len(template) == 0 {
+		return insertDefaultCategories(ctx, tx, orgID)
+	}
+
+	// Single-level template (roots, then children), so one ordered pass
+	// suffices: roots have parent_id NULL and sort first.
+	remapped := make(map[uuid.UUID]uuid.UUID, len(template))
+	for _, c := range template {
+		var parent any
+		if c.parentID != nil {
+			newParent, ok := remapped[*c.parentID]
+			if !ok {
+				return fmt.Errorf("system category %q references unknown parent", c.name)
+			}
+			parent = newParent
+		} else {
+			parent = nil
+		}
+		var newID uuid.UUID
+		if err := tx.QueryRow(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, icon) VALUES ($1, $2, $3, $4, $5) RETURNING id`, orgID, parent, c.name, c.kind, c.icon).Scan(&newID); err != nil {
+			return fmt.Errorf("insert category %q: %w", c.name, err)
+		}
+		remapped[c.id] = newID
+	}
+	return nil
+}
+
+// insertDefaultCategories seeds the built-in Russian category set (roots
+// Доходы/Расходы + 25 children). Used only when tx.system_categories is
+// empty; normally the template table carries this same set (migration 000009).
+func insertDefaultCategories(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) error {
 	incomeChildren := []string{
 		"Зарплата", "Фриланс", "Бизнес", "Инвестиции", "Аренда", "Подарки", "Прочее",
 	}
@@ -253,11 +311,11 @@ func insertSystemCategories(ctx context.Context, tx pgx.Tx, orgID uuid.UUID) err
 	}
 	for _, r := range roots {
 		var rootID uuid.UUID
-		if err := tx.QueryRow(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, is_system) VALUES ($1, NULL, $2, $3, true) RETURNING id`, orgID, r.name, r.kind).Scan(&rootID); err != nil {
+		if err := tx.QueryRow(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind) VALUES ($1, NULL, $2, $3) RETURNING id`, orgID, r.name, r.kind).Scan(&rootID); err != nil {
 			return fmt.Errorf("insert system category %q: %w", r.name, err)
 		}
 		for _, child := range r.children {
-			if _, err := tx.Exec(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind, is_system) VALUES ($1, $2, $3, $4, true)`, orgID, rootID, child, r.kind); err != nil {
+			if _, err := tx.Exec(ctx, `INSERT INTO tx.categories (org_id, parent_id, name, kind) VALUES ($1, $2, $3, $4)`, orgID, rootID, child, r.kind); err != nil {
 				return fmt.Errorf("insert system category %q: %w", child, err)
 			}
 		}

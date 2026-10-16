@@ -8,7 +8,7 @@ Registration, login, and refresh-token rotation. Issues Hasura-compatible RS256 
 
 | Method | Route | Notes |
 |---|---|---|
-| `Register(ctx, email, password)` | `POST /actions/auth/register` | Creates org + user + role + system categories in one `SERIALIZABLE` tx |
+| `Register(ctx, email, password)` | `POST /actions/auth/register` | Creates org + user + role + template category copy in one `SERIALIZABLE` tx |
 | `Login(ctx, email, password)` | `POST /actions/auth/login` | bcrypt check, inserts refresh token |
 | `RefreshToken(ctx, token)` | `POST /actions/auth/refresh` | Single-use rotation: revoke old, issue new pair |
 
@@ -16,7 +16,7 @@ Cron `POST /cron/cleanup_tokens` deletes expired `identity.refresh_tokens` (no h
 
 ## Tables
 
-`identity.organizations` (plan=`free`, `base_currency=USD` fixed), `identity.users`, `identity.roles` (`owner` lookup), `identity.user_roles`, `tx.categories` (seeds system Income/Expense), `identity.refresh_tokens`.
+`identity.organizations` (plan=`free`, `base_currency=USD` fixed), `identity.users`, `identity.roles` (`owner` lookup), `identity.user_roles`, `tx.system_categories` (global template) → `tx.categories` (per-org copy), `identity.refresh_tokens`.
 
 ## Rules
 

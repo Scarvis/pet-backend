@@ -1,4 +1,8 @@
--- Merged baseline from migrations/db_schema_0001..0003.sql, in order. Do NOT edit by hand.
+-- Merged baseline from migrations/db_schema_0001..0003.sql plus the
+-- follow-ups 0004 (tx guard trigger), 0005/0007 (is_hidden flags),
+-- 0008 (account.accounts_type catalog + initial_amount) and
+-- 0009 (tx.system_categories catalog, is_system removed).
+-- Kept in sync with migrations/ by hand for docker init (see 9.2).
 
 -- >>> BEGIN db_schema_0001.sql >>>
 -- =====================================================================
@@ -245,15 +249,33 @@ CREATE INDEX idx_fx_rates_lookup ON fx.rates(base_code, quote_code, as_of DESC);
 -- 5. ACCOUNT — счета и баланс-леджер
 -- =====================================================================
 
+-- Catalog of allowed account types (migration 000008). account.accounts.type
+-- references this table, so only catalogued values are accepted.
+CREATE TABLE account.accounts_type (
+    code       TEXT PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+INSERT INTO account.accounts_type (code) VALUES
+    ('debit card'),
+    ('cash'),
+    ('deposit'),
+    ('broker'),
+    ('credit card'),
+    ('credit'),
+    ('debt'),
+    ('crypto'),
+    ('saving')
+ON CONFLICT (code) DO NOTHING;
+
 CREATE TABLE account.accounts (
     id            UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     org_id        UUID NOT NULL REFERENCES identity.organizations(id) ON DELETE CASCADE,
     owner_user_id UUID NOT NULL REFERENCES identity.users(id),
     name          TEXT NOT NULL,
-    type          TEXT NOT NULL
-                  CHECK (type IN ('cash','card','deposit','debt')),
+    type          TEXT NOT NULL REFERENCES account.accounts_type(code),
     currency      CHAR(3) NOT NULL,
     balance_minor BIGINT NOT NULL DEFAULT 0,
+    initial_amount BIGINT NOT NULL DEFAULT 0,
     is_archived   BOOLEAN NOT NULL DEFAULT false,
     is_hidden     BOOLEAN NOT NULL DEFAULT false,
     created_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
@@ -274,16 +296,29 @@ CREATE TABLE tx.categories (
     name       TEXT NOT NULL,
     kind       TEXT NOT NULL CHECK (kind IN ('income','expense')),
     icon       TEXT,
-    is_system  BOOLEAN NOT NULL DEFAULT false,
     is_hidden  BOOLEAN NOT NULL DEFAULT false,
     created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
     UNIQUE (org_id, parent_id, name)
 );
 CREATE INDEX idx_categories_org ON tx.categories(org_id);
 
+-- Global category template (migration 000009, org-free tree with the same
+-- shape as tx.categories minus org_id). New orgs are seeded by copying this
+-- table in the backend (internal/auth insertSystemCategories).
+CREATE TABLE tx.system_categories (
+    id         UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    parent_id  UUID REFERENCES tx.system_categories(id) ON DELETE CASCADE,
+    name       TEXT NOT NULL,
+    kind       TEXT NOT NULL CHECK (kind IN ('income','expense')),
+    icon       TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    UNIQUE NULLS NOT DISTINCT (parent_id, name)
+);
+
 -- Max 100 categories per organization (roots + children + user rows).
--- New orgs are seeded with 27 Russian system categories by the backend
--- (internal/auth insertSystemCategories); see migrations/000006.
+-- New orgs are seeded with the 27 Russian template categories by copying
+-- tx.system_categories in the backend (internal/auth insertSystemCategories);
+-- see migrations/000006 (cap) and 000009 (template catalog).
 CREATE OR REPLACE FUNCTION tx.enforce_category_limit()
 RETURNS trigger AS $$
 BEGIN
@@ -631,7 +666,8 @@ WHERE t.deleted_at IS NULL;
 
 -- Активные счета с балансом
 CREATE VIEW account.v_active_accounts AS
-SELECT id, org_id, owner_user_id, name, type, currency, balance_minor, is_hidden
+SELECT id, org_id, owner_user_id, name, type, currency, balance_minor,
+       initial_amount, is_hidden
 FROM account.accounts
 WHERE deleted_at IS NULL AND is_archived = false;
 
@@ -660,10 +696,41 @@ INSERT INTO fx.currencies(code, name, minor_unit) VALUES
     ('ETH','Ethereum',18)
 ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name, minor_unit = EXCLUDED.minor_unit;
 
--- Системные категории создаются вместе с организацией.
--- Пример вызова после регистрации пользователя:
---   1. Создать запись в identity.organizations
---   2. Вставить набор категорий с org_id и is_system = true
+-- Шаблонные категории — глобальные, без org_id. После регистрации
+-- пользователя бэкенд копирует их в tx.categories с org_id новой организации
+-- (internal/auth insertSystemCategories).
+DO $$
+DECLARE
+    v_income_root UUID;
+    v_expense_root UUID;
+BEGIN
+    INSERT INTO tx.system_categories (parent_id, name, kind)
+    VALUES (NULL, 'Доходы', 'income')
+    ON CONFLICT DO NOTHING;
+    SELECT id INTO v_income_root FROM tx.system_categories
+    WHERE parent_id IS NULL AND name = 'Доходы' AND kind = 'income';
+
+    INSERT INTO tx.system_categories (parent_id, name, kind)
+    VALUES (NULL, 'Расходы', 'expense')
+    ON CONFLICT DO NOTHING;
+    SELECT id INTO v_expense_root FROM tx.system_categories
+    WHERE parent_id IS NULL AND name = 'Расходы' AND kind = 'expense';
+
+    INSERT INTO tx.system_categories (parent_id, name, kind)
+    SELECT v_income_root, c, 'income' FROM (VALUES
+        ('Зарплата'), ('Фриланс'), ('Бизнес'), ('Инвестиции'),
+        ('Аренда'), ('Подарки'), ('Прочее')) AS t(c)
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO tx.system_categories (parent_id, name, kind)
+    SELECT v_expense_root, c, 'expense' FROM (VALUES
+        ('Продукты'), ('Кафе и рестораны'), ('Транспорт'), ('Жильё'),
+        ('Коммунальные услуги'), ('Связь и интернет'), ('Здоровье'),
+        ('Одежда и обувь'), ('Образование'), ('Развлечения'), ('Спорт'),
+        ('Дети'), ('Питомцы'), ('Путешествия'), ('Красота'), ('Подписки'),
+        ('Налоги'), ('Прочее')) AS t(c)
+    ON CONFLICT DO NOTHING;
+END $$;
 
 -- =====================================================================
 -- 14. ВКЛЮЧЕНИЕ МУЛЬТИТЕНАНТНОСТИ (когда понадобится второй пользователь)

@@ -83,8 +83,9 @@ input RefreshTokenInput {
 
 input CreateAccountInput {
   name: String!
-  type: String!                   # cash | card | deposit | debt
+  type: String!                   # debit card | cash | deposit | broker | credit card | credit | debt | crypto | saving (FK → account.accounts_type)
   currency: String!
+  initial_amount: Bigint           # optional opening balance in minor units, defaults to 0
   is_hidden: Boolean               # optional, defaults to false
 }
 
@@ -150,7 +151,7 @@ type Mutation {
   rebuildAnalytics(input: RebuildAnalyticsInput!): OkOutput
 }
 
-# createAccount returns the account row with its balance as a Bigint string.
+# createAccount returns the account row with money fields as Bigint strings.
 type AccountOutput {
   id: uuid!
   org_id: uuid!
@@ -159,6 +160,7 @@ type AccountOutput {
   type: String!
   currency: String!
   balance_minor: Bigint!
+  initial_amount: Bigint!
   is_hidden: Boolean!
   created_at: timestamptz!
   updated_at: timestamptz!
