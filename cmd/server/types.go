@@ -60,40 +60,44 @@ func issueTokens(ctx context.Context, s *server, email, password string, registe
 	return toTokenResponse(out), nil
 }
 
-// createAccountRequest is the createAccount input (§6.4).
+// createAccountRequest is the createAccount input (§6.4). InitialAmount is
+// optional and defaults to 0 (absent or null means no opening balance).
 type createAccountRequest struct {
-	Name     string `json:"name"`
-	Type     string `json:"type"`
-	Currency string `json:"currency"`
-	IsHidden bool   `json:"is_hidden"`
+	Name          string         `json:"name"`
+	Type          string         `json:"type"`
+	Currency      string         `json:"currency"`
+	InitialAmount *common.Bigint `json:"initial_amount"`
+	IsHidden      bool           `json:"is_hidden"`
 }
 
-// accountResponse renders an account with its balance as a Bigint string.
+// accountResponse renders an account with money fields as Bigint strings.
 type accountResponse struct {
-	ID           uuid.UUID     `json:"id"`
-	OrgID        uuid.UUID     `json:"org_id"`
-	OwnerUserID  uuid.UUID     `json:"owner_user_id"`
-	Name         string        `json:"name"`
-	Type         string        `json:"type"`
-	Currency     string        `json:"currency"`
-	BalanceMinor common.Bigint `json:"balance_minor"`
-	IsHidden     bool          `json:"is_hidden"`
-	CreatedAt    time.Time     `json:"created_at"`
-	UpdatedAt    time.Time     `json:"updated_at"`
+	ID            uuid.UUID     `json:"id"`
+	OrgID         uuid.UUID     `json:"org_id"`
+	OwnerUserID   uuid.UUID     `json:"owner_user_id"`
+	Name          string        `json:"name"`
+	Type          string        `json:"type"`
+	Currency      string        `json:"currency"`
+	BalanceMinor  common.Bigint `json:"balance_minor"`
+	InitialAmount common.Bigint `json:"initial_amount"`
+	IsHidden      bool          `json:"is_hidden"`
+	CreatedAt     time.Time     `json:"created_at"`
+	UpdatedAt     time.Time     `json:"updated_at"`
 }
 
 func toAccountResponse(a *accounts.Account) *accountResponse {
 	return &accountResponse{
-		ID:           a.ID,
-		OrgID:        a.OrgID,
-		OwnerUserID:  a.OwnerUserID,
-		Name:         a.Name,
-		Type:         a.Type,
-		Currency:     a.Currency,
-		BalanceMinor: toBigint(a.BalanceMinor),
-		IsHidden:     a.IsHidden,
-		CreatedAt:    a.CreatedAt,
-		UpdatedAt:    a.UpdatedAt,
+		ID:            a.ID,
+		OrgID:         a.OrgID,
+		OwnerUserID:   a.OwnerUserID,
+		Name:          a.Name,
+		Type:          a.Type,
+		Currency:      a.Currency,
+		BalanceMinor:  toBigint(a.BalanceMinor),
+		InitialAmount: toBigint(a.InitialAmount),
+		IsHidden:      a.IsHidden,
+		CreatedAt:     a.CreatedAt,
+		UpdatedAt:     a.UpdatedAt,
 	}
 }
 

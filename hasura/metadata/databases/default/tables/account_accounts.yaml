@@ -5,6 +5,9 @@ object_relationships:
   - name: owner
     using:
       foreign_key_constraint_on: owner_user_id
+  - name: account_type
+    using:
+      foreign_key_constraint_on: type
 array_relationships:
   - name: ledger_entries
     using:
@@ -25,6 +28,7 @@ insert_permissions:
         - name
         - type
         - currency
+        - initial_amount
         - is_archived
         - is_hidden
 select_permissions:

@@ -93,8 +93,8 @@
 | `app` | Service schema: events, utilities | `events`, `publish_event()`, `event_notify()`, `set_updated_at()` |
 | `identity` | Users, organizations, roles | `organizations`, `users`, `roles`, `user_roles`, `refresh_tokens` |
 | `fx` | Currencies and exchange rates | `currencies`, `rates` |
-| `account` | Accounts and balances | `accounts`, `balance_ledger`, `v_active_accounts` (view) |
-| `tx` | Transactions, categories, tags | `categories`, `transactions`, `tags`, `transaction_tags`, `v_transactions_full` (view) |
+| `account` | Accounts and balances | `accounts_type`, `accounts`, `balance_ledger`, `v_active_accounts` (view) |
+| `tx` | Transactions, categories, tags | `system_categories`, `categories`, `transactions`, `tags`, `transaction_tags`, `v_transactions_full` (view) |
 | `budget` | Budgets and limits | `budgets`, `budget_limits`, `budget_progress` |
 | `invest` | Investments | `portfolios`, `assets`, `holdings`, `trades`, `price_history` |
 | `import` | Statement import | `import_jobs`, `raw_rows` |
@@ -122,7 +122,7 @@
 |-------|-------|----------------|
 | `identity.organizations` | `plan` | `free`, `pro`, `team` |
 | `identity.users` | `status` | `active`, `suspended`, `deleted` |
-| `account.accounts` | `type` | `cash`, `card`, `deposit`, `debt` |
+| `account.accounts` | `type` | FK → `account.accounts_type(code)`: `debit card`, `cash`, `deposit`, `broker`, `credit card`, `credit`, `debt`, `crypto`, `saving` |
 | `tx.categories` | `kind` | `income`, `expense` |
 | `tx.transactions` | `kind` | `income`, `expense`, `transfer` |
 | `tx.transactions` | `source` | `manual`, `import`, `recurring` |
@@ -289,9 +289,11 @@ batches, then set `NOT NULL`.
 | `identity` | `refresh_tokens` | — | **not tracked** (Go only) |
 | `fx` | `currencies` | R | reference table |
 | `fx` | `rates` | R | written only from Go |
-| `account` | `accounts` | CRUD | deletion via `deleted_at` |
+| `account` | `accounts` | CRUD | deletion via `deleted_at`; `type` must exist in `accounts_type`, `initial_amount` is set once at creation |
+| `account` | `accounts_type` | R | catalog of allowed account types |
 | `account` | `v_active_accounts` | R | view |
 | `account` | `balance_ledger` | R | written only from Go |
+| `tx` | `system_categories` | R | global template copied into `categories` at registration |
 | `tx` | `categories` | CRUD | |
 | `tx` | `transactions` | R, U (`category_id`, `description` only) | creation, deletion and changes to amount/account/kind via Actions |
 | `tx` | `v_transactions_full` | R | view |
@@ -346,10 +348,10 @@ Hasura permission is misconfigured later.
 
 | Action | Type | Endpoint | Purpose |
 |--------|------|----------|---------|
-| `register` | Mutation | `/actions/auth/register` | Organization + user + system categories |
+| `register` | Mutation | `/actions/auth/register` | Organization + user + template category copy |
 | `login` | Mutation | `/actions/auth/login` | JWT + refresh |
 | `refreshToken` | Mutation | `/actions/auth/refresh` | Token rotation |
-| `createAccount` | Mutation | `/actions/account/create` | Validation, initial balance |
+| `createAccount` | Mutation | `/actions/account/create` | Validation, initial balance (`initial_amount`, opening ledger row) |
 | `createTransaction` | Mutation | `/actions/tx/create` | Validation + balance + ledger |
 | `createTransfer` | Mutation | `/actions/tx/transfer` | Two-sided transfer |
 | `updateTransaction` | Mutation | `/actions/tx/update` | Change amount/account/kind + balance correction |
@@ -621,7 +623,7 @@ POST /actions/auth/register
   2. INSERT identity.organizations (plan='free', base_currency)
   3. INSERT identity.users (password_hash = bcrypt, status='active')
   4. INSERT identity.user_roles (role_id → 'owner')
-  5. INSERT tx.categories — the system set (is_system = true)
+  5. INSERT tx.categories — copy of the tx.system_categories template
   6. COMMIT
   7. Issue JWT (access, 15 min) + refresh (30 days)
 
@@ -1035,6 +1037,8 @@ make migrate-down                 # roll back
 - `0001` — the contents of `db_schema.sql`.
 - `0002` — `app.events.uid UUID` (idempotency key).
 - `0003` — `app.event_consumers` (event worker cursor).
+- `0008` — `account.accounts_type` catalog + `accounts.initial_amount`.
+- `0009` — `tx.system_categories` template; `is_system` removed.
 - then — category seed data, indexes as the data grows.
 
 ### 9.4 CI/CD

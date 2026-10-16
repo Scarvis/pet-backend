@@ -18,11 +18,11 @@ string; Hasura runs with `STRINGIFY_NUMERIC_TYPES=true`). FX math via
 | Operation | Via | Endpoint / object |
 |---|---|---|
 | Register / login / refresh | Go | `POST /actions/auth/register`, `/login`, `/refresh` |
-| Create account | Go | `POST /actions/account/create` |
-| List/get/archive accounts | Hasura | `account.accounts`, `v_active_accounts` |
+| Create account | Go | `POST /actions/account/create` (`type` ∈ catalog `account.accounts_type`, optional `initial_amount` opening balance) |
+| List/get/archive accounts | Hasura | `account.accounts`, `v_active_accounts`; `account.accounts_type` read-only |
 | Create/update/delete transaction, transfer | Go | `POST /actions/tx/create`, `/transfer`, `/update`, `/delete` |
 | Reclassify transaction (category/description only) | Hasura | `tx.transactions` update `category_id`, `description` |
-| Categories, tags | Hasura | full CRUD |
+| Categories, tags | Hasura | full CRUD; `tx.system_categories` (global template) read-only |
 | Budgets, budget limits | Hasura | full CRUD; `budget_progress` is read-only (event worker writes it) |
 | Create trade | Go | `POST /actions/invest/trade` |
 | Portfolios, assets, holdings, trades, prices | Hasura | portfolios/assets CRUD, rest read-only |
@@ -44,7 +44,13 @@ string; Hasura runs with `STRINGIFY_NUMERIC_TYPES=true`). FX math via
    closures contain only DB work — side effects (JWT issue, notifications, HTTP)
    go after `COMMIT`.
 5. Balance reversals sum `account.balance_ledger` by `ref_id`; never recompute from
-   current FX rates. Lock multiple accounts in ascending id order.
+   current FX rates. Lock multiple accounts in ascending id order. New accounts
+   open with `balance_minor = initial_amount` plus an opening ledger row
+   (`reason='adjustment'`) when nonzero.
+6. Account `type` must exist in `account.accounts_type` (`debit card`, `cash`,
+   `deposit`, `broker`, `credit card`, `credit`, `debt`, `crypto`, `saving`).
+   Register seeds categories by copying `tx.system_categories` (no `is_system`
+   column on `tx.categories`).
 6. Validate currency with `common.ValidCurrency` before inserts; scope by org with
    `common.ActingOrg`; cross-org access returns `NotFound`.
 7. Handlers follow the `Handler{pool, log}` + `NewHandler(pool, cfg, log)` shape;
@@ -55,6 +61,9 @@ string; Hasura runs with `STRINGIFY_NUMERIC_TYPES=true`). FX math via
    worker — do not call them as CRUD.
 10. Docs: `ARCHITECTURE.md` §8 is the flow spec; per-package `internal/*/README.md`
     is the entry-point reference; when prose conflicts with `../db/*.sql`, trust SQL.
+11. Schema changes ship as `migrations/NNNN_name.up/down.sql` and the matching
+    `db_schema.sql` baseline edit (docker init runs the baseline, migrate runs
+    the delta); Hasura metadata (`hasura/metadata/.../tables/`) tracks renames.
 
 ## Module map
 

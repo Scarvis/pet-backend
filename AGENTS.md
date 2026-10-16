@@ -53,6 +53,14 @@ go build ./...; go vet ./...; gofmt -l cmd internal graphql; go test ./internal/
 - Money is integer minor units end-to-end (`common.Bigint` travels as a JSON
   string; Hasura runs with `STRINGIFY_NUMERIC_TYPES=true`); FX math via
   `common.ConvertToMinor` with each currency's `minor_unit`, never floats.
+- Account types come from the `account.accounts_type` catalog (migration
+  `000008`: `debit card`, `cash`, `deposit`, `broker`, `credit card`,
+  `credit`, `debt`, `crypto`, `saving`); `account.accounts.type` is a FK to
+  it. New accounts open with `balance_minor = initial_amount` plus an opening
+  `balance_ledger` row when nonzero.
+- New organizations are seeded by copying the global `tx.system_categories`
+  template into `tx.categories` (migration `000009` removed `is_system` from
+  `tx.categories`); see `internal/auth insertSystemCategories`.
 - Use the shared helpers: `common.ActingOrg` for org scoping,
   `common.ValidCurrency(ctx, pool, code)` before inserts,
   `common.Wrap`/`BadRequest`/`NotFound` + `WriteError`/`WriteJSON` for errors.
