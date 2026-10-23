@@ -40,11 +40,19 @@ func NewMiddleware(pool ConnProvider, secret string, logger *slog.Logger) *Middl
 func (m *Middleware) Handler(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !m.checkSecret(r) {
-			writeJSONError(w, http.StatusUnauthorized, "unauthorized", "missing or invalid X-Action-Secret")
+			WriteActionError(w, New(http.StatusUnauthorized, "unauthorized", "missing or invalid X-Action-Secret"))
 			return
 		}
 
-		defer m.recover(w)
+		// The deferred closure must call recover() itself: recover() only
+		// returns a panic value when evaluated in the panicking goroutine
+		// as part of a deferred call. Both `defer m.recover(w, recover())`
+		// (argument evaluated eagerly, before any panic) and
+		// `defer m.recover(w)` (recovery registered in a frame that has
+		// already returned by panic time) are silently broken.
+		defer func() {
+			m.recover(w, recover())
+		}()
 		next.ServeHTTP(w, r)
 	})
 }
@@ -58,23 +66,20 @@ func (m *Middleware) checkSecret(r *http.Request) bool {
 	return got != "" && got == m.secret
 }
 
-// recover turns a panic from the wrapped handler into a JSON HTTP error instead
-// of crashing the process. A typed *Error carries its own status and message;
-// any other panic value is logged and rendered as 500.
-func (m *Middleware) recover(w http.ResponseWriter) {
-	defer func() {
-		if rec := recover(); rec != nil {
-			var eErr *Error
-			switch v := rec.(type) {
-			case *Error:
-				eErr = v
-			default:
-				m.logger.Error("panic recovered from Action handler", "value", rec)
-				eErr = New(http.StatusInternalServerError, "internal_error", "internal server error")
-			}
-			if eErr != nil {
-				writeJSONError(w, eErr.Status, eErr.Code, eErr.Message)
-			}
-		}
-	}()
+// recover turns a recovered panic from the wrapped handler into a JSON HTTP
+// error instead of crashing the process. A typed *Error carries its own status
+// and message; any other panic value is logged and rendered as 500.
+func (m *Middleware) recover(w http.ResponseWriter, rec any) {
+	if rec == nil {
+		return
+	}
+	var eErr *Error
+	switch v := rec.(type) {
+	case *Error:
+		eErr = v
+	default:
+		m.logger.Error("panic recovered from Action handler", "value", rec)
+		eErr = New(http.StatusInternalServerError, "internal_error", "internal server error")
+	}
+	WriteActionError(w, eErr)
 }

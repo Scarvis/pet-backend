@@ -103,3 +103,22 @@ func WriteJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(v)
 }
+
+// WriteActionError renders err in the shape Hasura Actions expect on failure:
+// {"message": ...} with the mapped HTTP status (ARCHITECTURE §6.4). Hasura
+// parses this body and surfaces the message to the client; the {"error": {...}}
+// shape of WriteError stays for Events/Cron delivery, which only reads the
+// status code. Rendered key must be exactly "message" — Hasura fails to parse
+// any other shape ("key \"message\" not found") and masks the real cause.
+func WriteActionError(w http.ResponseWriter, err error) {
+	msg := "internal server error"
+	var e *Error
+	if errors.As(err, &e) {
+		msg = e.Message
+	} else if IsRetryable(err) {
+		msg = err.Error()
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(HTTPStatus(err))
+	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
+}

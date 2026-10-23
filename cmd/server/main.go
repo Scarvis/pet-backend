@@ -137,33 +137,16 @@ func handle[Req any, Res any](w http.ResponseWriter, r *http.Request, fn func(ct
 	var req Req
 	sessionVars, err := decodeInput(r, &req)
 	if err != nil {
-		common.WriteError(w, err)
+		common.WriteActionError(w, err)
 		return
 	}
 	ctx := withIdentity(r.Context(), r, sessionVars)
 	res, err := fn(ctx, req)
 	if err != nil {
-		writeActionError(w, err)
+		common.WriteActionError(w, err)
 		return
 	}
 	common.WriteJSON(w, res)
-}
-
-// writeActionError renders err in the shape Hasura Actions expect on failure:
-// {"message": ...} with the mapped HTTP status (§6.4). The shared
-// {"error": {...}} shape (common.WriteError) stays for Events/Cron delivery,
-// which only cares about the status code.
-func writeActionError(w http.ResponseWriter, err error) {
-	msg := "internal server error"
-	var e *common.Error
-	if errors.As(err, &e) {
-		msg = e.Message
-	} else if common.IsRetryable(err) {
-		msg = err.Error()
-	}
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(common.HTTPStatus(err))
-	_ = json.NewEncoder(w).Encode(map[string]string{"message": msg})
 }
 
 func toBigint(v int64) common.Bigint { return common.Bigint(strconv.FormatInt(v, 10)) }
