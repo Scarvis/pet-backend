@@ -1,0 +1,67 @@
+table:
+  name: budget_plans
+  schema: budget
+  select_permissions:
+    - role: member
+      permission:
+        columns: '*'
+        filter:
+          org_id:
+            _eq: X-Hasura-Org-Id
+    - role: owner
+      permission:
+        columns: '*'
+        filter:
+          org_id:
+            _eq: X-Hasura-Org-Id
+    - role: viewer
+      permission:
+        columns: '*'
+        filter:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  insert_permissions:
+    - role: member
+      permission:
+        columns:
+          - org_id
+          - period_type
+          - period_start
+          - ref_type
+          - category_id
+          - account_id
+          - amount_minor
+          - currency
+          - created_at
+          - updated_at
+        check:
+          org_id:
+            _eq: X-Hasura-Org-Id
+    - role: owner
+      permission:
+        columns: '*'
+        check:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  update_permissions:
+    - role: owner
+      permission:
+        columns:
+          - amount_minor
+          - currency
+        check:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  delete_permissions:
+    - role: owner
+      permission:
+        filter:
+          org_id:
+            _eq: X-Hasura-Org-Id
+  array_relationships:
+    - name: category
+      using:
+        foreign_key_constraint_on: category_id
+    - name: account
+      using:
+        foreign_key_constraint_on: account_id

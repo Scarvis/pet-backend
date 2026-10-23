@@ -7,6 +7,7 @@
 - "!include budget_budget_limits.yaml"
 - "!include budget_budget_progress.yaml"
 - "!include budget_budgets.yaml"
+- "!include budget_budget_plans.yaml"
 - "!include fx_currencies.yaml"
 - "!include fx_rates.yaml"
 - "!include identity_organizations.yaml"

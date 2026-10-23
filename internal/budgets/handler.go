@@ -68,6 +68,22 @@ type BudgetProgress struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 }
 
+// BudgetPlan is one budget.budget_plans row — an explicit budget plan value
+// per (period_type, period_start, org, ref).
+type BudgetPlan struct {
+	ID        uuid.UUID `json:"id"`
+	OrgID     uuid.UUID `json:"org_id"`
+	PeriodType string    `json:"period_type"` // month | quarter | year
+	PeriodStart time.Time `json:"period_start"`
+	RefType   string    `json:"ref_type"`    // category | account
+	CategoryID uuid.UUID `json:"category_id"` // exactly one, per ref_type
+	AccountID uuid.UUID `json:"account_id"`
+	AmountMinor int64    `json:"amount_minor"`
+	Currency  string    `json:"currency"`
+	CreatedAt time.Time `json:"created_at"`
+	UpdatedAt time.Time `json:"updated_at"`
+}
+
 func validatePeriod(period string) error {
 	if !budgetPeriods[period] {
 		return common.BadRequest("period must be one of monthly, weekly, custom")
@@ -381,4 +397,139 @@ func (h *Handler) GetProgress(ctx context.Context, limitID uuid.UUID) (*BudgetPr
 		return nil, common.Wrap(err)
 	}
 	return &p, nil
+}
+
+// CreateBudgetPlan inserts a new budget plan for the acting org.
+func (h *Handler) CreateBudgetPlan(ctx context.Context, periodType string, periodStart time.Time, refType string, categoryID uuid.UUID, accountID uuid.UUID, amountMinor int64, currency string) (*BudgetPlan, error) {
+	if periodType != "month" && periodType != "quarter" && periodType != "year" {
+		return nil, common.BadRequest("period_type must be one of month, quarter, year")
+	}
+	if refType != "category" && refType != "account" {
+		return nil, common.BadRequest("ref_type must be one of category, account")
+	}
+	if refType == "category" && categoryID == uuid.Nil {
+		return nil, common.BadRequest("category_id is required when ref_type is category")
+	}
+	if refType == "account" && accountID == uuid.Nil {
+		return nil, common.BadRequest("account_id is required when ref_type is account")
+	}
+	if amountMinor < 0 {
+		return nil, common.BadRequest("amount_minor must be non-negative")
+	}
+
+	var bp BudgetPlan
+	err := db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
+		orgID, err := common.ActingOrg(ctx, h.pool)
+		if err != nil {
+			return err
+		}
+		row := tx.QueryRow(ctx, `INSERT INTO budget.budget_plans (org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency, created_at, updated_at`,
+			orgID, periodType, periodStart, refType, categoryID, accountID, amountMinor, currency)
+		return row.Scan(&bp.ID, &bp.OrgID, &bp.PeriodType, &bp.PeriodStart, &bp.RefType, &bp.CategoryID, &bp.AccountID, &bp.AmountMinor, &bp.Currency, &bp.CreatedAt, &bp.UpdatedAt)
+	})
+	if err != nil {
+		return nil, err
+	}
+	h.log.Info("budget plan created", "id", bp.ID, "period_type", periodType)
+	return &bp, nil
+}
+
+// ListBudgetPlans returns all budget plans of the acting org.
+func (h *Handler) ListBudgetPlans(ctx context.Context) ([]BudgetPlan, error) {
+	orgID, err := common.ActingOrg(ctx, h.pool)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := h.pool.Query(ctx, `SELECT id, org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency, created_at, updated_at FROM budget.budget_plans WHERE org_id = $1 ORDER BY created_at ASC`, orgID)
+	if err != nil {
+		return nil, common.Wrap(err)
+	}
+	defer rows.Close()
+	var out []BudgetPlan
+	for rows.Next() {
+		var bp BudgetPlan
+		if err := rows.Scan(&bp.ID, &bp.OrgID, &bp.PeriodType, &bp.PeriodStart, &bp.RefType, &bp.CategoryID, &bp.AccountID, &bp.AmountMinor, &bp.Currency, &bp.CreatedAt, &bp.UpdatedAt); err != nil {
+			return nil, common.Wrap(err)
+		}
+		out = append(out, bp)
+	}
+	return out, common.Wrap(rows.Err())
+}
+
+// GetBudgetPlan returns one budget plan by id, or NotFound when it does not exist or
+// belongs to another org.
+func (h *Handler) GetBudgetPlan(ctx context.Context, id uuid.UUID) (*BudgetPlan, error) {
+	orgID, err := common.ActingOrg(ctx, h.pool)
+	if err != nil {
+		return nil, err
+	}
+	var bp BudgetPlan
+	err = h.pool.QueryRow(ctx, `SELECT id, org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency, created_at, updated_at FROM budget.budget_plans WHERE id = $1 AND org_id = $2`, id, orgID).
+		Scan(&bp.ID, &bp.OrgID, &bp.PeriodType, &bp.PeriodStart, &bp.RefType, &bp.CategoryID, &bp.AccountID, &bp.AmountMinor, &bp.Currency, &bp.CreatedAt, &bp.UpdatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, common.Wrap(common.NotFound("budget plan not found"))
+	}
+	if err != nil {
+		return nil, common.Wrap(err)
+	}
+	return &bp, nil
+}
+
+// UpdateBudgetPlan changes amount_minor/currency. Nil pointers leave the field
+// untouched.
+func (h *Handler) UpdateBudgetPlan(ctx context.Context, id uuid.UUID, amountMinor *int64, currency *string) (*BudgetPlan, error) {
+	var bp BudgetPlan
+	err := db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
+		orgID, err := common.ActingOrg(ctx, h.pool)
+		if err != nil {
+			return err
+		}
+		var cur BudgetPlan
+		err = tx.QueryRow(ctx, `SELECT id, org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency, created_at, updated_at FROM budget.budget_plans WHERE id = $1 AND org_id = $2 FOR UPDATE`, id, orgID).
+			Scan(&cur.ID, &cur.OrgID, &cur.PeriodType, &cur.PeriodStart, &cur.RefType, &cur.CategoryID, &cur.AccountID, &cur.AmountMinor, &cur.Currency, &cur.CreatedAt, &cur.UpdatedAt)
+		if errors.Is(err, pgx.ErrNoRows) {
+			return common.Wrap(common.NotFound("budget plan not found"))
+		}
+		if err != nil {
+			return common.Wrap(err)
+		}
+		if amountMinor != nil {
+			cur.AmountMinor = *amountMinor
+		}
+		if currency != nil {
+			cur.Currency = *currency
+		}
+		err = tx.QueryRow(ctx, `UPDATE budget.budget_plans SET amount_minor = $2, currency = $3 WHERE id = $1 RETURNING id, org_id, period_type, period_start, ref_type, category_id, account_id, amount_minor, currency, created_at, updated_at`,
+			cur.ID, cur.AmountMinor, cur.Currency).
+			Scan(&bp.ID, &bp.OrgID, &bp.PeriodType, &bp.PeriodStart, &bp.RefType, &bp.CategoryID, &bp.AccountID, &bp.AmountMinor, &bp.Currency, &bp.CreatedAt, &bp.UpdatedAt)
+		return common.Wrap(err)
+	})
+	if err != nil {
+		return nil, err
+	}
+	h.log.Info("budget plan updated", "id", bp.ID)
+	return &bp, nil
+}
+
+// DeleteBudgetPlan removes one budget plan.
+func (h *Handler) DeleteBudgetPlan(ctx context.Context, id uuid.UUID) error {
+	orgID, err := common.ActingOrg(ctx, h.pool)
+	if err != nil {
+		return err
+	}
+	err = db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM budget.budget_plans WHERE id = $1 AND org_id = $2`, id, orgID)
+		if err != nil {
+			return common.Wrap(err)
+		}
+		if tag.RowsAffected() == 0 {
+			return common.Wrap(common.NotFound("budget plan not found"))
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	h.log.Info("budget plan deleted", "id", id)
+	return nil
 }
