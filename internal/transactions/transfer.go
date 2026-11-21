@@ -2,7 +2,6 @@ package transactions
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"time"
 
@@ -56,26 +55,11 @@ func (h *Handler) CreateTransfer(ctx context.Context, input CreateTransferInput)
 
 	var out TransferOutput
 	err = db.WithSerializable(ctx, h.pool, func(tx pgx.Tx) error {
-		// Lock both accounts in ascending id order (§8.0 deadlock protection). The
-		// query returns them ordered by id, so the first row is always the source.
-		type acct struct {
-			ID       uuid.UUID
-			OrgID    uuid.UUID
-			Currency string
-		}
-		var from, to acct
-		row := tx.QueryRow(ctx, `SELECT id, org_id, currency FROM account.accounts WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id ASC FOR UPDATE`, []uuid.UUID{input.FromAccountID, input.ToAccountID})
-		if err := row.Scan(&from.ID, &from.OrgID, &from.Currency); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return common.Wrap(common.NotFound("source account not found"))
-			}
-			return common.Wrap(err)
-		}
-		if err := row.Scan(&to.ID, &to.OrgID, &to.Currency); err != nil {
-			if errors.Is(err, pgx.ErrNoRows) {
-				return common.Wrap(common.NotFound("target account not found"))
-			}
-			return common.Wrap(err)
+		// Lock both accounts in ascending id order (§8.0 deadlock protection), then
+		// identify source and target by id: row order does not say which is which.
+		from, to, err := lockTransferAccounts(ctx, tx, input.FromAccountID, input.ToAccountID)
+		if err != nil {
+			return err
 		}
 
 		// Both accounts must belong to the acting user's organization.
@@ -106,7 +90,7 @@ func (h *Handler) CreateTransfer(ctx context.Context, input CreateTransferInput)
 
 		// Two ledger rows: source −amount, target +amount (§8.3 step 5). Each call
 		// also adjusts the corresponding balance.
-		if err := applyLedgerAndBalance(ctx, tx, from.ID, -delta, "transfer", txID); err != nil {
+		if err := applyLedgerAndBalance(ctx, tx, from.ID, -amount, "transfer", txID); err != nil {
 			return common.Wrap(err)
 		}
 		if err := applyLedgerAndBalance(ctx, tx, to.ID, delta, "transfer", txID); err != nil {
@@ -133,4 +117,57 @@ func (h *Handler) CreateTransfer(ctx context.Context, input CreateTransferInput)
 		return nil, err
 	}
 	return &out, nil
+}
+
+type transferAccount struct {
+	ID       uuid.UUID
+	OrgID    uuid.UUID
+	Currency string
+}
+
+// accountRows is the subset of pgx.Rows the lookup needs, so the scan logic can be
+// unit-tested without a database.
+type accountRows interface {
+	Next() bool
+	Scan(dest ...any) error
+	Err() error
+	Close()
+}
+
+// lockTransferAccounts locks both accounts with one query, in ascending id order to
+// avoid deadlocks, and returns them mapped to their roles by id.
+func lockTransferAccounts(ctx context.Context, tx pgx.Tx, fromID, toID uuid.UUID) (transferAccount, transferAccount, error) {
+	rows, err := tx.Query(ctx, `SELECT id, org_id, currency FROM account.accounts WHERE id = ANY($1) AND deleted_at IS NULL ORDER BY id ASC FOR UPDATE`, []uuid.UUID{fromID, toID})
+	if err != nil {
+		return transferAccount{}, transferAccount{}, common.Wrap(err)
+	}
+	defer rows.Close()
+
+	return scanTransferAccounts(rows, fromID, toID)
+}
+
+func scanTransferAccounts(rows accountRows, fromID, toID uuid.UUID) (from, to transferAccount, err error) {
+	var foundFrom, foundTo bool
+	for rows.Next() {
+		var account transferAccount
+		if err := rows.Scan(&account.ID, &account.OrgID, &account.Currency); err != nil {
+			return from, to, common.Wrap(err)
+		}
+		if account.ID == fromID {
+			from, foundFrom = account, true
+		}
+		if account.ID == toID {
+			to, foundTo = account, true
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return from, to, common.Wrap(err)
+	}
+	if !foundFrom {
+		return from, to, common.Wrap(common.NotFound("source account not found"))
+	}
+	if !foundTo {
+		return from, to, common.Wrap(common.NotFound("target account not found"))
+	}
+	return from, to, nil
 }
